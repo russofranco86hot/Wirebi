@@ -4,3 +4,6 @@ scikit-learn
 statsmodels
 openpyxl
 altair
+numpy
+plotly
+prophet
