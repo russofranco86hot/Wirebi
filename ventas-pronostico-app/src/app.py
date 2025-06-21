@@ -1,23 +1,10 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-
 from utils.excel_importer import import_excel
-from utils.charts import plot_forecast_chart
-from models.forecasting import TimeSeriesForecaster
-from io import BytesIO
-from openpyxl import load_workbook
-from openpyxl.worksheet.table import Table, TableStyleInfo
-from openpyxl.utils import get_column_letter
+from utils.charts import mostrar_grafico_clustered_line
+from models.forecasting import ForecastingModel
 
 st.set_page_config(layout="wide")
-st.markdown("""
-    <style>
-        .stDataFrame, .stTable {
-            width: 100% !important;
-        }
-    </style>
-""", unsafe_allow_html=True)
 
 def main():
     st.title("WIREBI - Aplicación de Pronóstico de Ventas")
@@ -34,89 +21,86 @@ def main():
             aggfunc='sum'
         ).reset_index()
 
-        # Inicializar ajustes y valores ajustados en session_state
-        if 'ajustes' not in st.session_state:
-            st.session_state['ajustes'] = data_pivot.copy()
-            for col in data_pivot.columns:
-                if col not in ['DPG', 'SKU']:
-                    st.session_state['ajustes'][col] = 0
-        if 'data_ajustada' not in st.session_state:
-            st.session_state['data_ajustada'] = data_pivot.copy()
+        # -------- FILTROS --------
+        dpgs = data_pivot['DPG'].unique().tolist()
+        dpg_seleccionado = st.selectbox("Selecciona un DPG para graficar y visualizar", options=dpgs)
+        skus_filtrados = data_pivot[data_pivot['DPG'] == dpg_seleccionado]['SKU'].unique().tolist()
+        sku_seleccionado = st.selectbox("Selecciona un producto (SKU) para graficar y visualizar", options=skus_filtrados)
 
-        st.write("Valores ajustados (original + ajuste):")
-        st.dataframe(st.session_state['data_ajustada'])
+        # Filtrar la tabla para el DPG y SKU seleccionado
+        df_filtro = data_pivot[(data_pivot['DPG'] == dpg_seleccionado) & (data_pivot['SKU'] == sku_seleccionado)].copy()
+        meses = [col for col in df_filtro.columns if col not in ['DPG', 'SKU']]
 
-        with st.form("ajustes_form"):
-            st.write("Ajustes (edita aquí para sumar/restar cantidades):")
-            ajustes_editados = st.data_editor(
-                st.session_state['ajustes'],
-                key="ajustes_editor"
-            )
-            aplicar = st.form_submit_button("Aplicar ajustes")
+        # Inicializar ajustes manuales en session_state
+        key_ajustes = f"ajustes_{dpg_seleccionado}_{sku_seleccionado}"
+        if key_ajustes not in st.session_state:
+            st.session_state[key_ajustes] = pd.DataFrame({
+                'DPG': [dpg_seleccionado],
+                'SKU': [sku_seleccionado],
+                **{mes: [0] for mes in meses}
+            })
 
-        if aplicar:
-            st.session_state['ajustes'] = ajustes_editados
-            data_ajustada = data_pivot.copy()
-            for col in data_pivot.columns:
-                if col not in ['DPG', 'SKU']:
-                    data_ajustada[col] = data_pivot[col] + st.session_state['ajustes'][col]
-            st.session_state['data_ajustada'] = data_ajustada
-            st.warning("Si acabas de editar una celda, por favor presiona 'Aplicar ajustes' una segunda vez para que se apliquen los cambios.")
+        # Construir tabla para mostrar y editar
+        tabla = pd.DataFrame()
+        # Fila Input (no editable)
+        fila_input = df_filtro.copy()
+        fila_input.insert(2, 'Tipo', 'Input')
+        # Fila Ajuste Manual (editable)
+        fila_ajuste = st.session_state[key_ajustes].copy()
+        fila_ajuste.insert(2, 'Tipo', 'Ajuste Manual')
+        # Fila Total (no editable)
+        fila_total = fila_input[meses].values + fila_ajuste[meses].values
+        fila_total = pd.DataFrame({
+            'DPG': [dpg_seleccionado],
+            'SKU': [sku_seleccionado],
+            'Tipo': ['Total'],
+            **{mes: [fila_total[0][i]] for i, mes in enumerate(meses)}
+        })
 
-        n_months = st.number_input(
-            "¿Cuántos meses quieres pronosticar?", min_value=1, max_value=48, value=12
+        tabla = pd.concat([fila_input, fila_ajuste, fila_total], ignore_index=True)
+
+        # Mostrar y editar solo la fila de Ajuste Manual
+        st.write("Datos Según DPG y SKU:")
+        disabled_rows = (tabla['Tipo'] != 'Ajuste Manual').tolist()
+        edited_tabla = st.data_editor(
+            tabla,
+            disabled=disabled_rows,
+            key=f"editor_{dpg_seleccionado}_{sku_seleccionado}"
         )
 
-        data_ajustada_long = st.session_state['data_ajustada'].melt(
-            id_vars=['DPG', 'SKU'],
-            var_name='Month',
-            value_name='Sum of Quantity'
-        )
-        data_ajustada_long = data_ajustada_long[~data_ajustada_long['Month'].isin(['index'])]
-        data_ajustada_long['Month'] = pd.to_datetime(data_ajustada_long['Month'], format='%Y-%m')
+        # SIEMPRE usar el valor editado para la siguiente tabla y gráfico
+        nueva_ajuste = edited_tabla[edited_tabla['Tipo'] == 'Ajuste Manual'].drop(columns=['Tipo']).reset_index(drop=True)
 
-        # Renombrar para Prophet
-        df_prophet = data_ajustada_long.rename(columns={
-            'Month': 'ds',
-            'Sum of Quantity': 'y'
-        })[['ds', 'y']]
+        # Construir la fila Total usando el ajuste recién editado
+        fila_total = fila_input[meses].values + nueva_ajuste[meses].values
+        fila_total = pd.DataFrame({
+            'DPG': [dpg_seleccionado],
+            'SKU': [sku_seleccionado],
+            'Tipo': ['Total'],
+            **{mes: [fila_total[0][i]] for i, mes in enumerate(meses)}
+        })
 
-        model = TimeSeriesForecaster()
-        forecast_result = model.fit_and_predict(df_prophet, periods_to_forecast=n_months)
+        # Reconstruir la tabla para mostrar, usando el ajuste recién editado
+        tabla_actualizada = pd.concat([fila_input, nueva_ajuste.assign(Tipo='Ajuste Manual'), fila_total], ignore_index=True)
 
-        if st.button("Realizar Pronóstico"):
-            st.write("Pronóstico de ventas ajustado:")
-            st.dataframe(forecast_result[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(n_months))
+        # --- GRÁFICO ---
+        df_plot = pd.melt(tabla_actualizada[tabla_actualizada['Tipo'].isin(['Input', 'Total'])], 
+                        id_vars=['Tipo'], 
+                        value_vars=meses, 
+                        var_name='Month', 
+                        value_name='Valor')
+        df_plot['Month'] = pd.to_datetime(df_plot['Month'], format='%Y-%m')
+        color_map = {'Input': 'orange', 'Total': 'green'}
+        import altair as alt
+        chart = alt.Chart(df_plot).mark_line(point=True).encode(
+            x=alt.X('Month:T', title='Mes'),
+            y=alt.Y('Valor:Q', title='Cantidad'),
+            color=alt.Color('Tipo:N', scale=alt.Scale(domain=list(color_map.keys()), range=list(color_map.values())))
+        ).properties(title=f"Evolución para DPG {dpg_seleccionado} y SKU {sku_seleccionado}")
+        st.altair_chart(chart, use_container_width=True)
 
-            st.subheader("Gráfico de Pronóstico de Ventas:")
-            fig = plot_forecast_chart(forecast_result, n_months)
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Descargar pronóstico en Excel
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                forecast_result.to_excel(writer, index=False, sheet_name='Pronostico')
-            output.seek(0)
-            wb = load_workbook(output)
-            ws = wb.active
-            max_row = ws.max_row
-            max_col = ws.max_column
-            last_col_letter = get_column_letter(max_col)
-            table_ref = f"A1:{last_col_letter}{max_row}"
-            table = Table(displayName="Pronostico", ref=table_ref)
-            style = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False,
-                                   showLastColumn=False, showRowStripes=True, showColumnStripes=False)
-            table.tableStyleInfo = style
-            ws.add_table(table)
-            output_final = BytesIO()
-            wb.save(output_final)
-            output_final.seek(0)
-            st.download_button(
-                label="Descargar pronóstico (XLSX)",
-                data=output_final,
-                file_name="pronostico_forecast.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        # Solo después, actualiza el session_state para persistencia
+        st.session_state[key_ajustes] = nueva_ajuste
 
 if __name__ == "__main__":
     main()
