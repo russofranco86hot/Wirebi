@@ -1,4 +1,4 @@
-// frontend/src/api.js - Versión FINAL y Corregida
+// frontend/src/api.js - Versión FINAL y Consolidada
 
 const API_BASE_URL = 'http://localhost:8000'; // Asegúrate de que esta URL sea la correcta de tu backend FastAPI
 
@@ -33,10 +33,8 @@ const buildQueryParams = (paramsObj) => {
     const value = paramsObj[key];
     if (value !== null && value !== undefined && value !== '') {
       if (Array.isArray(value)) {
-        // Si el valor es un array, se agregan múltiples parámetros con el mismo nombre de clave
         value.forEach(item => params.append(key, String(item)));
       } else {
-        // Si no es un array, se agrega un solo parámetro
         params.append(key, String(value));
       }
     }
@@ -46,20 +44,20 @@ const buildQueryParams = (paramsObj) => {
 };
 
 
-export const fetchHistoricalData = async ({ clientIds, skuIds, startPeriod, endPeriod, keyFigureIds }) => {
-  // Asegurarse de que los IDs se pasen como arrays de strings, incluso si solo hay uno
+export const fetchHistoricalData = async ({ clientIds, skuIds, startPeriod, endPeriod, keyFigureIds, sources }) => {
   const params = {
-    client_ids: clientIds ? clientIds.map(String) : [], // Convertir a string y asegurar array
-    sku_ids: skuIds ? skuIds.map(String) : [],           // Convertir a string y asegurar array
+    client_ids: clientIds ? clientIds.map(String) : [],
+    sku_ids: skuIds ? skuIds.map(String) : [],
     start_period: startPeriod,
     end_period: endPeriod,
-    key_figure_ids: keyFigureIds || [],                 // Asegurar array de ints
+    key_figure_ids: keyFigureIds || [],
+    sources: sources || [], // Añadir el nuevo parámetro de fuentes
   };
 
   const queryString = buildQueryParams(params);
   const url = `${API_BASE_URL}/data/history/${queryString}`;
   
-  console.log("Fetching historical data from:", url); // Para depuración
+  console.log("Fetching historical data from:", url); 
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`);
@@ -67,26 +65,5 @@ export const fetchHistoricalData = async ({ clientIds, skuIds, startPeriod, endP
   return response.json();
 };
 
-export const fetchForecastVersionedData = async ({ versionIds, clientIds, skuIds, startPeriod, endPeriod, keyFigureIds }) => {
-    // Asegurarse de que los IDs se pasen como arrays de strings
-    const params = {
-        version_ids: versionIds ? versionIds.map(String) : [],
-        client_ids: clientIds ? clientIds.map(String) : [],
-        sku_ids: skuIds ? skuIds.map(String) : [],
-        start_period: startPeriod,
-        end_period: endPeriod,
-        key_figure_ids: keyFigureIds || [],
-    };
-
-    const queryString = buildQueryParams(params);
-    const url = `${API_BASE_URL}/data/forecast/versioned/${queryString}`;
-
-    console.log("Fetching forecast data from:", url); // Para depuración
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    return response.json();
-};
-
-// Puedes añadir más funciones aquí para otras interacciones con la API (POST, PUT, DELETE)
+// Eliminamos fetchForecastVersionedData ya que todo va a fact_history
+// export const fetchForecastVersionedData = async (...) { ... }

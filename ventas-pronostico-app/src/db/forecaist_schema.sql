@@ -2,7 +2,7 @@
 
 -- DROP DATABASE IF EXISTS forecaist;
 
-CREATE DATABASE forecaist
+/*CREATE DATABASE forecaist
     WITH
     OWNER = fr94901
     ENCODING = 'UTF8'
@@ -12,6 +12,29 @@ CREATE DATABASE forecaist
     TABLESPACE = pg_default
     CONNECTION LIMIT = -1
     IS_TEMPLATE = False;
+*/
+
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+
+-- OTORGAR TODOS LOS PRIVILEGIOS AL ESQUEMA PUBLIC A TU USUARIO
+GRANT ALL PRIVILEGES ON SCHEMA public TO fr94901;
+
+-- OTORGAR PRIVILEGIOS POR DEFECTO PARA TABLAS FUTURAS EN ESE ESQUEMA
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO fr94901;
+
+-- Asegurarse de que el usuario tenga permisos en el esquema public
+GRANT ALL PRIVILEGES ON SCHEMA public TO fr94901;
+
+-- Si ya hay tablas, otórgale permisos sobre ellas también
+-- (Opcional, si estás recreando todo desde cero, el comando de abajo ya lo cubre)
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO fr94901;
+
+-- Otorga permisos para futuras tablas que se creen en el esquema
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO fr94901;
+
+-- Salir de psql
+GRANT ALL ON SCHEMA public TO fr94901;
 
 GRANT TEMPORARY, CONNECT ON DATABASE forecaist TO PUBLIC;
 
@@ -30,7 +53,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO fr
 -- DIMENSIONAL TABLES
 
 -- Existing Dimensional Tables (as you have them)
-CREATE TABLE dim_keyfigures (
+CREATE TABLE IF NOT EXISTS dim_keyfigures (
     key_figure_id INT PRIMARY KEY,
     name TEXT NOT NULL,
     applies_to TEXT CHECK (applies_to IN ('history', 'forecast')),
@@ -38,20 +61,20 @@ CREATE TABLE dim_keyfigures (
     "order" INT
 );
 
-CREATE TABLE dim_adjustment_types (
+CREATE TABLE IF NOT EXISTS dim_adjustment_types (
     adjustment_type_id INT PRIMARY KEY,
     name TEXT NOT NULL
 );
 
 -- NEW Dimensional Tables for Clients and SKUs
-CREATE TABLE dim_clients (
+CREATE TABLE IF NOT EXISTS dim_clients (
     client_id UUID PRIMARY KEY,
     client_name TEXT NOT NULL UNIQUE, -- El nombre descriptivo del cliente
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP
 );
 
-CREATE TABLE dim_skus (
+CREATE TABLE IF NOT EXISTS dim_skus (
     sku_id UUID PRIMARY KEY,
     sku_name TEXT NOT NULL UNIQUE, -- El nombre descriptivo del SKU
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -59,7 +82,7 @@ CREATE TABLE dim_skus (
 );
 
 -- Auxiliary Tables (as you have them)
-CREATE TABLE forecast_smoothing_parameters (
+CREATE TABLE IF NOT EXISTS forecast_smoothing_parameters (
     forecast_run_id UUID PRIMARY KEY,
     client_id UUID NOT NULL,
     alpha FLOAT NOT NULL,
@@ -68,7 +91,7 @@ CREATE TABLE forecast_smoothing_parameters (
     FOREIGN KEY (client_id) REFERENCES dim_clients(client_id) -- New FK
 );
 
-CREATE TABLE forecast_versions (
+CREATE TABLE IF NOT EXISTS forecast_versions (
     version_id UUID PRIMARY KEY,
     client_id UUID NOT NULL,
     name TEXT NOT NULL,
@@ -84,7 +107,7 @@ CREATE TABLE forecast_versions (
 
 -- Fact Tables (Update FOREIGN KEY constraints)
 
-CREATE TABLE fact_history (
+CREATE TABLE IF NOT EXISTS fact_history (
     client_id UUID NOT NULL,
     sku_id UUID NOT NULL,
     client_final_id UUID NOT NULL, -- You might reconsider this if it's always client_id-sku_id
@@ -102,7 +125,7 @@ CREATE TABLE fact_history (
     -- FOREIGN KEY (client_final_id) REFERENCES dim_client_finals(client_final_id) -- If you decide to make it a dim table
 );
 
-CREATE TABLE fact_forecast_stat (
+CREATE TABLE IF NOT EXISTS fact_forecast_stat (
     client_id UUID NOT NULL,
     sku_id UUID NOT NULL,
     client_final_id UUID NOT NULL,
@@ -118,7 +141,7 @@ CREATE TABLE fact_forecast_stat (
     FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id) -- New FK
 );
 
-CREATE TABLE fact_adjustments (
+CREATE TABLE IF NOT EXISTS fact_adjustments (
     client_id UUID NOT NULL,
     sku_id UUID NOT NULL,
     client_final_id UUID NOT NULL,
@@ -136,7 +159,7 @@ CREATE TABLE fact_adjustments (
     FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id) -- New FK
 );
 
-CREATE TABLE fact_forecast_versioned (
+CREATE TABLE IF NOT EXISTS fact_forecast_versioned (
     version_id UUID NOT NULL,
     client_id UUID NOT NULL,
     sku_id UUID NOT NULL,
@@ -151,7 +174,7 @@ CREATE TABLE fact_forecast_versioned (
     FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id) -- New FK
 );
 
-CREATE TABLE manual_input_comments (
+CREATE TABLE IF NOT EXISTS manual_input_comments (
     client_id UUID NOT NULL,
     sku_id UUID NOT NULL,
     client_final_id UUID NOT NULL,
@@ -165,3 +188,4 @@ CREATE TABLE manual_input_comments (
     FOREIGN KEY (client_id) REFERENCES dim_clients(client_id), -- New FK
     FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id) -- New FK
 );
+

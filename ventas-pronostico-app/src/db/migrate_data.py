@@ -1,3 +1,5 @@
+# ventas-pronostico-app/src/db/migrate_data.py - Versión corregida
+
 import pandas as pd
 import psycopg2
 from psycopg2 import extras
@@ -21,9 +23,9 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "Chaca1986!")
 DB_PORT = os.getenv("DB_PORT", "5432")
 
 # --- Ruta al archivo XLSX ---
-XLSX_FILE_PATH = '../data/DB.xlsx'
+XLSX_FILE_PATH = r'D:\Descargas\Tincho\Wirebi-russofranco86hot\Wirebi\ventas-pronostico-app\src\data\DB.xlsx' # Ruta relativa desde este script
 
-# --- IDs por defecto (Puedes ajustarlos si ya tienes IDs específicos) ---
+# --- IDs por defecto ---
 DEFAULT_USER_ID = uuid.UUID('00000000-0000-0000-0000-000000000001')
 
 def get_db_connection():
@@ -31,10 +33,13 @@ def get_db_connection():
     return psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD, port=DB_PORT)
 
 def insert_dim_keyfigures(conn):
-    """Inserta las figuras clave si no existen."""
+    """
+    Inserta las figuras clave si no existen.
+    Ambas 'Sales' y 'Order' se considerarán históricas para ir a fact_history.
+    """
     key_figures_data = [
         (1, 'Sales', 'history', True, 1),
-        (2, 'Order', 'forecast', True, 2),
+        (2, 'Order', 'history', True, 2), # 'Order' ahora también aplica a 'history'
     ]
     try:
         with conn.cursor() as cur:
@@ -60,7 +65,7 @@ def get_key_figure_id_by_name(conn, name):
 
 def migrate_db_xlsx_to_postgres(file_path):
     """
-    Lee el archivo DB.xlsx e inserta los datos.
+    Lee el archivo DB.xlsx e inserta todos los datos relevantes en fact_history.
     """
     try:
         df = pd.read_excel(file_path)
@@ -69,8 +74,8 @@ def migrate_db_xlsx_to_postgres(file_path):
 
         df.rename(columns={
             'Month': 'period',
-            'DPG': 'client_name', # Ahora mapeamos a 'client_name' para la tabla dim_clients
-            'SKU': 'sku_name',    # Ahora mapeamos a 'sku_name' para la tabla dim_skus
+            'DPG': 'client_name',
+            'SKU': 'sku_name',
             'Sum of Quantity': 'value',
             'KeyFigure': 'key_figure_name'
         }, inplace=True)
@@ -80,152 +85,107 @@ def migrate_db_xlsx_to_postgres(file_path):
         df['period'] = pd.to_datetime(df['period']).dt.date
 
         with get_db_connection() as conn:
-            insert_dim_keyfigures(conn)
-            
+            insert_dim_keyfigures(conn) # Asegurarse que 'Sales' y 'Order' estén definidos
+
             sales_kf_id = get_key_figure_id_by_name(conn, 'Sales')
             order_kf_id = get_key_figure_id_by_name(conn, 'Order')
 
             if sales_kf_id is None:
-                print("Error: 'Sales' KeyFigure ID no encontrado en dim_keyfigures. Asegúrate de que exista.")
+                print("Error: 'Sales' KeyFigure ID no encontrado en dim_keyfigures.")
                 return
             if order_kf_id is None:
-                print("Error: 'Order' KeyFigure ID no encontrado en dim_keyfigures. Asegúrate de que exista.")
+                print("Error: 'Order' KeyFigure ID no encontrado en dim_keyfigures.")
                 return
 
             history_data_to_insert = []
-            forecast_versioned_data_to_insert = []
             
-            client_name_to_uuid_map = {} # Mapeo de nombre de cliente a UUID
-            sku_name_to_uuid_map = {}    # Mapeo de nombre de SKU a UUID
-
-            initial_version_id = uuid.uuid4()
-            initial_forecast_run_id = uuid.uuid4()
+            client_name_to_uuid_map = {}
+            sku_name_to_uuid_map = {}
             
             try:
                 with conn.cursor() as cur:
-                    # Insertar registros en dim_clients y dim_skus primero
-                    # Recorrer todos los nombres de clientes y SKUs únicos en el DataFrame
                     unique_client_names = df['client_name'].unique()
                     for c_name in unique_client_names:
-                        c_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, str(c_name))
+                        c_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, str(c_name).strip())
                         client_name_to_uuid_map[c_name] = c_uuid
                         cur.execute("""
                             INSERT INTO dim_clients (client_id, client_name)
                             VALUES (%s, %s)
                             ON CONFLICT (client_id) DO UPDATE SET client_name = EXCLUDED.client_name;
-                        """, (c_uuid, c_name))
+                        """, (c_uuid, c_name.strip()))
                     
                     unique_sku_names = df['sku_name'].unique()
                     for s_name in unique_sku_names:
-                        s_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, str(s_name))
+                        s_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, str(s_name).strip())
                         sku_name_to_uuid_map[s_name] = s_uuid
                         cur.execute("""
                             INSERT INTO dim_skus (sku_id, sku_name)
                             VALUES (%s, %s)
                             ON CONFLICT (sku_id) DO UPDATE SET sku_name = EXCLUDED.sku_name;
-                        """, (s_uuid, s_name))
+                        """, (s_uuid, s_name.strip()))
                     conn.commit()
                     print("Nombres de clientes y SKUs insertados/verificados en tablas dimensionales.")
 
-                    # forecast_smoothing_parameters (usa un client_id genérico para este registro, ahora desde el mapa)
-                    # Tomamos el UUID del primer cliente para este registro dummy, o uno fijo si no hay clientes.
-                    first_client_uuid_for_forecast = next(iter(client_name_to_uuid_map.values()), uuid.UUID('a1b2c3d4-e5f6-7890-1234-567890abcdef'))
-                    cur.execute("""
-                        INSERT INTO forecast_smoothing_parameters (forecast_run_id, client_id, alpha, user_id)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (forecast_run_id) DO NOTHING;
-                    """, (initial_forecast_run_id, first_client_uuid_for_forecast, 0.5, DEFAULT_USER_ID))
-                    conn.commit()
-                    
-                    # forecast_versions
-                    cur.execute("""
-                        INSERT INTO forecast_versions (version_id, client_id, name, created_by, history_source, model_used, forecast_run_id, notes)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (version_id) DO NOTHING;
-                    """, (initial_version_id, first_client_uuid_for_forecast, 'Carga Inicial DB.xlsx', DEFAULT_USER_ID, 'sales', 'Carga Excel Original', initial_forecast_run_id, 'Datos cargados del archivo DB.xlsx'))
-                    conn.commit()
-
             except Exception as e:
-                print(f"Advertencia: Error al insertar/verificar registros iniciales o dim_clients/skus: {e}. Puede que ya existan.")
+                print(f"Advertencia: Error al insertar/verificar dim_clients/skus: {e}. Puede que ya existan.")
                 conn.rollback()
 
-            # --- LÓGICA PARA ELIMINAR DUPLICADOS ANTES DE LA INSERCIÓN ---
+            # --- Lógica para eliminar duplicados antes de la inserción en fact_history ---
             df_processed = df.copy() 
 
-            df_sales = df_processed[df_processed['key_figure_name'] == 'Sales']
-            df_order = df_processed[df_processed['key_figure_name'] == 'Order']
+            history_pk_cols = ['client_name', 'sku_name', 'period', 'key_figure_name']
+            
+            initial_rows = len(df_processed)
+            df_processed = df_processed.drop_duplicates(subset=history_pk_cols, keep='first')
+            if len(df_processed) < initial_rows:
+                print(f"Eliminadas {initial_rows - len(df_processed)} filas duplicadas para fact_history.")
+            # -----------------------------------------------------------------------------
 
-            base_pk_cols = ['client_name', 'sku_name', 'period'] # Usamos nombres para el drop_duplicates
+            for _, row in df_processed.iterrows():
+                client_name = str(row['client_name']).strip()
+                sku_name = str(row['sku_name']).strip()
+                key_figure_name = str(row['key_figure_name']).strip()
+                value = row['value']
 
-            if not df_sales.empty:
-                initial_sales_rows = len(df_sales)
-                df_sales = df_sales.drop_duplicates(subset=base_pk_cols, keep='first')
-                if len(df_sales) < initial_sales_rows:
-                    print(f"Eliminadas {initial_sales_rows - len(df_sales)} filas duplicadas para 'Sales' (fact_history).")
-
-            if not df_order.empty:
-                initial_order_rows = len(df_order)
-                df_order = df_order.drop_duplicates(subset=base_pk_cols, keep='first')
-                if len(df_order) < initial_order_rows:
-                    print(f"Eliminadas {initial_order_rows - len(df_order)} filas duplicadas para 'Order' (fact_forecast_versioned).")
-            # ------------------------------------------------------------------
-
-            # Iterar sobre los DataFrames ya sin duplicados
-            for _, row in df_sales.iterrows():
-                # Obtener UUIDs de los mapas (ya insertados en dim_clients/skus)
-                current_client_id = client_name_to_uuid_map.get(str(row['client_name']).strip())
-                current_sku_id = sku_name_to_uuid_map.get(str(row['sku_name']).strip())
+                current_client_id = client_name_to_uuid_map.get(client_name)
+                current_sku_id = sku_name_to_uuid_map.get(sku_name)
                 
-                # Generar client_final_id como antes (combinación de client y sku, para unicidad)
-                client_final_combined_id = f"{str(row['client_name']).strip()}-{str(row['sku_name']).strip()}"
+                client_final_combined_id = f"{client_name}-{sku_name}"
                 current_client_final_id = uuid.uuid5(uuid.NAMESPACE_DNS, client_final_combined_id)
 
+                kf_id_to_use = None
+                source_to_use = None
 
-                if current_client_id and current_sku_id: # Solo insertar si tenemos IDs válidos
+                if key_figure_name == 'Sales':
+                    kf_id_to_use = sales_kf_id
+                    source_to_use = 'sales'
+                elif key_figure_name == 'Order':
+                    kf_id_to_use = order_kf_id
+                    source_to_use = 'order'
+                else:
+                    print(f"Advertencia: KeyFigure '{key_figure_name}' no reconocida. Fila omitida.")
+                    continue
+
+                if current_client_id and current_sku_id and kf_id_to_use and source_to_use:
                     history_data_to_insert.append((
                         current_client_id,
                         current_sku_id,
                         current_client_final_id,
                         row['period'],
-                        'sales',
-                        sales_kf_id,
-                        row['value'],
+                        source_to_use,
+                        kf_id_to_use,
+                        value,
                         DEFAULT_USER_ID
                     ))
                 else:
-                    print(f"Advertencia: No se pudo encontrar Client ID para '{row['client_name']}' o SKU ID para '{row['sku_name']}'. Fila omitida.")
-
-
-            for _, row in df_order.iterrows():
-                # Obtener UUIDs de los mapas
-                current_client_id = client_name_to_uuid_map.get(str(row['client_name']).strip())
-                current_sku_id = sku_name_to_uuid_map.get(str(row['sku_name']).strip())
-
-                # Generar client_final_id
-                client_final_combined_id = f"{str(row['client_name']).strip()}-{str(row['sku_name']).strip()}"
-                current_client_final_id = uuid.uuid5(uuid.NAMESPACE_DNS, client_final_combined_id)
-
-                if current_client_id and current_sku_id: # Solo insertar si tenemos IDs válidos
-                    forecast_versioned_data_to_insert.append((
-                        initial_version_id,
-                        current_client_id,
-                        current_sku_id,
-                        current_client_final_id,
-                        row['period'],
-                        order_kf_id,
-                        row['value']
-                    ))
-                else:
-                    print(f"Advertencia: No se pudo encontrar Client ID para '{row['client_name']}' o SKU ID para '{row['sku_name']}'. Fila omitida.")
-
+                    print(f"Advertencia: Faltan IDs de cliente/SKU o KeyFigure/Source para la fila. Fila omitida.")
 
             with conn.cursor() as cursor:
-                # --- Insertar en fact_history ---
                 if history_data_to_insert:
                     history_query = """
                         INSERT INTO fact_history (client_id, sku_id, client_final_id, period, source, key_figure_id, value, user_id)
                         VALUES %s
-                        ON CONFLICT (client_id, sku_id, client_final_id, period, key_figure_id) DO UPDATE
+                        ON CONFLICT (client_id, sku_id, client_final_id, period, key_figure_id, source) DO UPDATE
                         SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP, user_id = EXCLUDED.user_id;
                     """
                     extras.execute_values(cursor, history_query, history_data_to_insert,
@@ -233,26 +193,13 @@ def migrate_db_xlsx_to_postgres(file_path):
                     print(f"Se insertaron/actualizaron {len(history_data_to_insert)} filas en fact_history.")
                 else:
                     print("No hay datos de historial para insertar.")
-
-                # --- Insertar en fact_forecast_versioned ---
-                if forecast_versioned_data_to_insert:
-                    forecast_versioned_query = """
-                        INSERT INTO fact_forecast_versioned (version_id, client_id, sku_id, client_final_id, period, key_figure_id, value)
-                        VALUES %s
-                        ON CONFLICT (version_id, client_id, sku_id, client_final_id, period, key_figure_id) DO UPDATE
-                        SET value = EXCLUDED.value;
-                    """
-                    extras.execute_values(cursor, forecast_versioned_query, forecast_versioned_data_to_insert,
-                                         template="(%s, %s, %s, %s, %s, %s, %s)")
-                    print(f"Se insertaron/actualizaron {len(forecast_versioned_data_to_insert)} filas en fact_forecast_versioned.")
-                else:
-                    print("No hay datos de pronóstico versionados para insertar.")
-
+            
             conn.commit()
             print("Migración de datos desde DB.xlsx a PostgreSQL completada.")
 
     except FileNotFoundError:
-        print(f"Error: El archivo '{file_path}' no fue encontrado. Asegúrate de que 'DB.xlsx' esté en la carpeta '../data/'.")
+        # La ruta del XLSX está relativa a este script
+        print(f"Error: El archivo '{file_path}' no fue encontrado. Asegúrate de que '{XLSX_FILE_PATH}' exista en la estructura.")
     except KeyError as e:
         print(f"Error: Columna faltante en el archivo XLSX o nombre incorrecto: {e}. Revisa tus nombres de columnas en 'DB.xlsx' y el mapeo en el script.")
     except Exception as e:
