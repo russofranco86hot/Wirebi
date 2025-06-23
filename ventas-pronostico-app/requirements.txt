@@ -5,3 +5,6 @@ statsmodels
 openpyxl
 altair
 numpy
+psycopg2
+os
+psycopg2-binary[extra]

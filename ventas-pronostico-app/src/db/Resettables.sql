@@ -1,0 +1,23 @@
+truncate public.dim_adjustment_types cascade;
+truncate public.dim_keyfigures cascade;
+truncate public.fact_adjustments cascade;
+truncate public.fact_forecast_stat cascade;
+truncate public.manual_input_comments cascade;
+truncate public.forecast_versions cascade;
+truncate public.fact_forecast_versioned cascade;
+truncate public.fact_history cascade;
+truncate public.forecast_smoothing_parameters cascade;
+truncate public.dim_clients cascade;
+truncate public.dim_skus cascade;
+
+drop table public.dim_adjustment_types cascade;
+drop table public.dim_keyfigures cascade;
+drop table public.fact_adjustments cascade;
+drop table public.fact_forecast_stat cascade;
+drop table public.manual_input_comments cascade;
+drop table public.forecast_versions cascade;
+drop table public.fact_forecast_versioned cascade;
+drop table public.fact_history cascade;
+drop table public.forecast_smoothing_parameters cascade;
+drop table public.dim_clients cascade;
+drop table public.dim_skus cascade;
