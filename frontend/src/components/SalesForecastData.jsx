@@ -1,27 +1,27 @@
-// frontend/src/components/SalesForecastData.jsx - Versión completa
+// frontend/src/components/SalesForecastData.jsx - Versión FINAL y limpia
 
 import React, { useState, useEffect } from 'react';
-import { fetchClients, fetchSkus, fetchKeyFigures, fetchHistoricalData, fetchForecastVersionedData } from '../api';
+// ¡CAMBIO CLAVE AQUÍ! Eliminamos 'fetchForecastVersionedData' de la importación
+import { fetchClients, fetchSkus, fetchKeyFigures, fetchHistoricalData } from '../api'; 
 
 function SalesForecastData() {
   // Estados para los datos y el estado de carga/error
   const [historyData, setHistoryData] = useState([]);
-  const [forecastData, setForecastData] = useState([]);
-  const [loadingData, setLoadingData] = useState(false); // Inicia como false, se activa al buscar
+  const [loadingData, setLoadingData] = useState(false);
   const [errorData, setErrorData] = useState(null);
 
   // Estados para los datos de dimensiones (para los filtros)
   const [clients, setClients] = useState([]);
   const [skus, setSkus] = useState([]);
   const [keyFigures, setKeyFigures] = useState([]);
-  const [versions, setVersions] = useState([]); // Necesitarás un endpoint para esto en el futuro
 
   // Estados para los filtros seleccionados por el usuario
-  const [selectedClient, setSelectedClient] = useState(''); // UUID del cliente seleccionado
-  const [selectedSku, setSelectedSku] = useState('');       // UUID del SKU seleccionado
-  const [startDate, setStartDate] = useState('');           // Fecha de inicio (YYYY-MM-DD)
-  const [endDate, setEndDate] = useState('');               // Fecha de fin (YYYY-MM-DD)
-  const [selectedKeyFigures, setSelectedKeyFigures] = useState([]); // IDs de KeyFigures seleccionadas
+  const [selectedClient, setSelectedClient] = useState('');
+  const [selectedSku, setSelectedSku] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [selectedKeyFigures, setSelectedKeyFigures] = useState([]);
+  const [selectedSources, setSelectedSources] = useState([]); // Nuevo estado para fuentes ('sales', 'order')
 
   // Efecto para cargar las dimensiones (clientes, SKUs, KeyFigures) al inicio
   useEffect(() => {
@@ -31,13 +31,11 @@ function SalesForecastData() {
           fetchClients(),
           fetchSkus(),
           fetchKeyFigures(),
-          // En el futuro, podrías tener también fetchForecastVersions() aquí
         ]);
         setClients(clientsData);
         setSkus(skusData);
         setKeyFigures(keyFiguresData);
       } catch (e) {
-        // Manejar errores de carga de dimensiones
         console.error("Error loading dimensions:", e);
       }
     };
@@ -49,29 +47,17 @@ function SalesForecastData() {
     setLoadingData(true);
     setErrorData(null);
     try {
-      // Prepara los parámetros para la API
       const filterParams = {
         clientIds: selectedClient ? [selectedClient] : null,
         skuIds: selectedSku ? [selectedSku] : null,
         startPeriod: startDate || null,
         endPeriod: endDate || null,
-        keyFigureIds: selectedKeyFigures.length > 0 ? selectedKeyFigures.map(Number) : null, // Asegurar que sean números
+        keyFigureIds: selectedKeyFigures.length > 0 ? selectedKeyFigures.map(Number) : null,
+        sources: selectedSources.length > 0 ? selectedSources : null,
       };
 
-      // Realiza las peticiones a la API
       const historical = await fetchHistoricalData(filterParams);
-      // Para forecast_versioned, necesitamos un version_id.
-      // Por ahora, si no seleccionas una versión específica, podrías obtener todas las versiones del cliente.
-      // Aquí estamos simplificando, asumiendo que no hay filtro de versión aún.
-      // Para un uso real, el usuario probablemente elegiría una versión o habría una versión 'actual'.
-      const forecast = await fetchForecastVersionedData({
-        ...filterParams,
-        versionIds: null, // Por ahora, no filtramos por versión aquí. Se podría añadir un filtro en la UI.
-        // O podrías buscar una versión por defecto para el cliente/SKU seleccionado.
-      });
-
       setHistoryData(historical);
-      setForecastData(forecast);
 
     } catch (e) {
       setErrorData(e.message);
@@ -88,9 +74,17 @@ function SalesForecastData() {
     );
   };
 
+  // Función para manejar el cambio en los filtros de Fuentes
+  const handleSourceChange = (event) => {
+    const { value, checked } = event.target;
+    setSelectedSources(prev => 
+      checked ? [...prev, value] : prev.filter(source => source !== value)
+    );
+  };
+
   return (
     <section>
-      <h2>Datos de Ventas y Pronóstico</h2>
+      <h2>Datos de Ventas y Órdenes</h2>
 
       {/* Controles de Filtro */}
       <div style={{ marginBottom: '20px', border: '1px solid #ccc', padding: '15px' }}>
@@ -132,10 +126,25 @@ function SalesForecastData() {
               <input
                 type="checkbox"
                 value={kf.key_figure_id}
-                checked={selectedKeyFigures.includes(String(kf.key_figure_id))} // Asegurarse de que el tipo coincida
+                checked={selectedKeyFigures.includes(String(kf.key_figure_id))}
                 onChange={handleKeyFigureChange}
               />
               {kf.name}
+            </label>
+          ))}
+        </div>
+        <div style={{ marginTop: '10px' }}>
+          <label>Fuente:</label>
+          {/* Opciones de fuente basadas en tus datos ('sales', 'order') */}
+          {['sales', 'order'].map(sourceOption => (
+            <label key={sourceOption} style={{ marginLeft: '10px' }}>
+              <input
+                type="checkbox"
+                value={sourceOption}
+                checked={selectedSources.includes(sourceOption)}
+                onChange={handleSourceChange}
+              />
+              {sourceOption.charAt(0).toUpperCase() + sourceOption.slice(1)} {/* Capitalizar */}
             </label>
           ))}
         </div>
@@ -144,16 +153,16 @@ function SalesForecastData() {
         </button>
       </div>
 
-      {/* Mostrar Datos */}
+      {/* Mostrar Datos Históricos (incluye 'Sales' y 'Order') */}
       {loadingData ? (
         <p>Cargando datos...</p>
       ) : errorData ? (
         <p style={{ color: 'red' }}>Error al cargar datos: {errorData}</p>
       ) : (
         <>
-          <h3>Datos Históricos ({historyData.length} registros)</h3>
+          <h3>Datos ({historyData.length} registros)</h3>
           {historyData.length === 0 ? (
-            <p>No hay datos históricos para los filtros seleccionados.</p>
+            <p>No hay datos para los filtros seleccionados.</p>
           ) : (
             <table border="1" style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
               <thead>
@@ -167,44 +176,15 @@ function SalesForecastData() {
                 </tr>
               </thead>
               <tbody>
-                {historyData.map((item, index) => (
-                  <tr key={index}>
+                {historyData.map((item) => (
+                  // Usar una clave compuesta robusta que sea única para cada fila de FactHistory
+                  <tr key={`${item.client_id}-${item.sku_id}-${item.period}-${item.key_figure_id}-${item.source}`}>
                     <td>{item.client?.client_name || item.client_id}</td>
                     <td>{item.sku?.sku_name || item.sku_id}</td>
                     <td>{item.period}</td>
                     <td>{item.key_figure?.name || item.key_figure_id}</td>
                     <td>{item.value}</td>
                     <td>{item.source}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-
-          <h3 style={{ marginTop: '30px' }}>Datos de Pronóstico Versionado ({forecastData.length} registros)</h3>
-          {forecastData.length === 0 ? (
-            <p>No hay datos de pronóstico versionado para los filtros seleccionados.</p>
-          ) : (
-            <table border="1" style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
-              <thead>
-                <tr>
-                  <th>Versión</th>
-                  <th>Cliente</th>
-                  <th>SKU</th>
-                  <th>Período</th>
-                  <th>Figura Clave</th>
-                  <th>Valor</th>
-                </tr>
-              </thead>
-              <tbody>
-                {forecastData.map((item, index) => (
-                  <tr key={index}>
-                    <td>{item.version?.name || item.version_id}</td> {/* Asumiendo que ForecastVersion tiene un 'name' */}
-                    <td>{item.client?.client_name || item.client_id}</td>
-                    <td>{item.sku?.sku_name || item.sku_id}</td>
-                    <td>{item.period}</td>
-                    <td>{item.key_figure?.name || item.key_figure_id}</td>
-                    <td>{item.value}</td>
                   </tr>
                 ))}
               </tbody>
