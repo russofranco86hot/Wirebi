@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+psycopg2-binary[extra]
+sqlalchemy 
+python-dotenv
+pydantic-settings
+app
+python-multipart
+fastapi[all]

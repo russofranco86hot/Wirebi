@@ -1,0 +1,41 @@
+Ir a Visual code, y dar permisos parar correr scripts:
+1) Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+2) Ir al path donde esta el backend, por ejemplo:
+ 
+cd D:\Descargas\Tincho\Wirebi-russofranco86hot\Wirebi\backend
+
+2) Activarlo:
+
+.venv_backend\Scripts\activate
+
+3) 
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+
+-----------------------------------------------------------------------
+
+Para REACT:
+
+1) Asegurarte de tener (sino instalar) NODE.JS y NPM.
+
+cd D:\Descargas\Tincho\Wirebi-russofranco86hot\Wirebi\frontend
+
+npm  run dev
+
+
+Tendrás dos servidores corriendo ahora:
+
+Tu FastAPI backend (generalmente en http://localhost:8000).
+Tu React frontend (generalmente en http://localhost:5173).
+
+
+------------------------------------------------------------------------------------------
+
+
+Te sugiero que empieces probando los endpoints GET. Por ejemplo:
+
+http://localhost:8000/clients/: Para obtener una lista de todos los clientes que se cargaron desde tu DB.xlsx.
+http://localhost:8000/skus/: Para obtener una lista de todos los SKUs.
+http://localhost:8000/keyfigures/: Para obtener las figuras clave ("Sales", "Order").
+http://localhost:8000/data/history/: Para obtener los datos históricos de ventas.
+http://localhost:8000/data/forecast/versioned/: Para obtener los datos de pronóstico versionado.
