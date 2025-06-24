@@ -1,4 +1,4 @@
-# ventas-pronostico-app/src/db/migrate_data.py - Versión corregida
+# ventas-pronostico-app/src/db/migrate_data.py - Versión Final
 
 import pandas as pd
 import psycopg2
@@ -23,7 +23,8 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "Chaca1986!")
 DB_PORT = os.getenv("DB_PORT", "5432")
 
 # --- Ruta al archivo XLSX ---
-XLSX_FILE_PATH = r'D:\Descargas\Tincho\Wirebi-russofranco86hot\Wirebi\ventas-pronostico-app\src\data\DB.xlsx' # Ruta relativa desde este script
+XLSX_FILE_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'DB.xlsx')
+XLSX_FILE_PATH = os.path.abspath(XLSX_FILE_PATH)
 
 # --- IDs por defecto ---
 DEFAULT_USER_ID = uuid.UUID('00000000-0000-0000-0000-000000000001')
@@ -35,11 +36,18 @@ def get_db_connection():
 def insert_dim_keyfigures(conn):
     """
     Inserta las figuras clave si no existen.
-    Ambas 'Sales' y 'Order' se considerarán históricas para ir a fact_history.
+    'Sales' y 'Order' se consideran 'history' para ser cargadas en fact_history.
     """
     key_figures_data = [
         (1, 'Sales', 'history', True, 1),
-        (2, 'Order', 'history', True, 2), # 'Order' ahora también aplica a 'history'
+        (2, 'Order', 'history', True, 2), # 'Order' ahora también aplica a 'history' para este contexto de carga
+        # Asegúrate de que estos key_figure_id coincidan con tu lógica o DB.xlsx
+        # Si tienes otras key figures en tu DB.xlsx que quieres cargar en fact_history, añádelas aquí:
+        # (3, 'Another Historical Key Figure', 'history', True, 3),
+        # Y si tienes key figures de forecast que no vienen del excel pero deben existir:
+        # (4, 'Statistical Forecast', 'forecast', False, 4),
+        # (5, 'Final Forecast', 'forecast', True, 5),
+        # (6, 'Override', 'forecast', True, 6),
     ]
     try:
         with conn.cursor() as cur:
@@ -91,10 +99,10 @@ def migrate_db_xlsx_to_postgres(file_path):
             order_kf_id = get_key_figure_id_by_name(conn, 'Order')
 
             if sales_kf_id is None:
-                print("Error: 'Sales' KeyFigure ID no encontrado en dim_keyfigures.")
+                print("Error: 'Sales' KeyFigure ID no encontrado en dim_keyfigures. Asegúrate de que exista.")
                 return
             if order_kf_id is None:
-                print("Error: 'Order' KeyFigure ID no encontrado en dim_keyfigures.")
+                print("Error: 'Order' KeyFigure ID no encontrado en dim_keyfigures. Asegúrate de que exista.")
                 return
 
             history_data_to_insert = []
@@ -126,8 +134,31 @@ def migrate_db_xlsx_to_postgres(file_path):
                     conn.commit()
                     print("Nombres de clientes y SKUs insertados/verificados en tablas dimensionales.")
 
+                    # Insertar un registro dummy en forecast_smoothing_parameters y forecast_versions
+                    # si no existen, para satisfacer FKs en caso de que estas tablas existan en el esquema
+                    # pero aún no se llenen con lógica de forecast.
+                    initial_forecast_run_id = uuid.uuid4()
+                    initial_version_id = uuid.uuid4()
+                    
+                    # Aseguramos un client_id válido para los dummies, usamos el primero o uno fijo
+                    dummy_client_id_for_forecast = next(iter(client_name_to_uuid_map.values()), uuid.UUID('a1b2c3d4-e5f6-7890-1234-567890abcdef'))
+                    
+                    cur.execute("""
+                        INSERT INTO forecast_smoothing_parameters (forecast_run_id, client_id, alpha, user_id)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (forecast_run_id) DO NOTHING;
+                    """, (initial_forecast_run_id, dummy_client_id_for_forecast, 0.5, DEFAULT_USER_ID))
+                    conn.commit()
+                    
+                    cur.execute("""
+                        INSERT INTO forecast_versions (version_id, client_id, name, created_at, created_by, history_source, model_used, forecast_run_id, notes)
+                        VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, %s)
+                        ON CONFLICT (version_id) DO NOTHING;
+                    """, (initial_version_id, dummy_client_id_for_forecast, 'Initial Excel Load Version', DEFAULT_USER_ID, 'sales', 'Manual Excel Load', initial_forecast_run_id, 'Version created during initial data migration from DB.xlsx'))
+                    conn.commit()
+
             except Exception as e:
-                print(f"Advertencia: Error al insertar/verificar dim_clients/skus: {e}. Puede que ya existan.")
+                print(f"Advertencia: Error al insertar/verificar registros iniciales para tablas auxiliares o dim_clients/skus: {e}. Puede que ya existan o haya un problema de FK.")
                 conn.rollback()
 
             # --- Lógica para eliminar duplicados antes de la inserción en fact_history ---
@@ -198,7 +229,6 @@ def migrate_db_xlsx_to_postgres(file_path):
             print("Migración de datos desde DB.xlsx a PostgreSQL completada.")
 
     except FileNotFoundError:
-        # La ruta del XLSX está relativa a este script
         print(f"Error: El archivo '{file_path}' no fue encontrado. Asegúrate de que '{XLSX_FILE_PATH}' exista en la estructura.")
     except KeyError as e:
         print(f"Error: Columna faltante en el archivo XLSX o nombre incorrecto: {e}. Revisa tus nombres de columnas en 'DB.xlsx' y el mapeo en el script.")

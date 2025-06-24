@@ -1,7 +1,6 @@
 // frontend/src/components/SalesForecastData.jsx - Versión FINAL y COMPLETA
 
 import React, { useState, useEffect } from 'react';
-// Importamos las funciones necesarias
 import { fetchClients, fetchSkus, fetchKeyFigures, fetchHistoricalData, fetchForecastVersionedData } from '../api'; 
 
 function SalesForecastData() {
@@ -38,7 +37,7 @@ function SalesForecastData() {
         setKeyFigures(keyFiguresData);
       } catch (e) {
         console.error("Error loading dimensions:", e);
-        setErrorData("Error al cargar dimensiones para filtros."); // Set error si las dimensiones fallan
+        setErrorData("Error al cargar dimensiones para filtros: " + e.message); // Set error si las dimensiones fallan
       }
     };
     loadDimensions();
@@ -64,11 +63,10 @@ function SalesForecastData() {
       ]);
 
       setHistoryData(historical);
-      setForecastVersionedData(versioned); // Actualizar estado de pronóstico versionado
+      setForecastVersionedData(versioned); 
 
     } catch (e) {
-      // Manejamos el error específico de "No data found matching criteria" en api.js
-      // Aquí, cualquier otro error HTTP o de red se mostrará.
+      // Manejamos errores generales de fetch o si no es un 404 de "No data found"
       setErrorData(e.message);
     } finally {
       setLoadingData(false);
@@ -165,7 +163,7 @@ function SalesForecastData() {
         </button>
       </div>
 
-      {/* Mostrar Datos */}
+      {/* Mostrar Datos Históricos */}
       {loadingData ? (
         <p>Cargando datos...</p>
       ) : errorData ? (
@@ -209,7 +207,7 @@ function SalesForecastData() {
             <table border="1" style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
               <thead>
                 <tr>
-                  <th>Versión ID</th> {/* O el nombre de la versión si lo traes */}
+                  <th>Versión ID</th>
                   <th>Cliente</th>
                   <th>SKU</th>
                   <th>Período</th>
@@ -220,7 +218,7 @@ function SalesForecastData() {
               <tbody>
                 {forecastVersionedData.map((item) => (
                   <tr key={`${item.version_id}-${item.client_id}-${item.sku_id}-${item.period}-${item.key_figure_id}`}>
-                    <td>{item.version?.name || item.version_id}</td>
+                    <td>{item.version?.name || String(item.version_id).substring(0, 8)}...</td> {/* Mostrar solo una parte del UUID si no hay nombre */}
                     <td>{item.client?.client_name || item.client_id}</td>
                     <td>{item.sku?.sku_name || item.sku_id}</td>
                     <td>{item.period}</td>

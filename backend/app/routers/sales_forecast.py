@@ -140,7 +140,6 @@ def delete_history_data(
 
 # --- Endpoints para otras tablas de hechos y auxiliares ---
 # Estos simplemente devuelven datos si existen, o una lista vacía si la tabla está vacía.
-# No lanzan 404 si la tabla está vacía, solo si la ruta no existe (que no pasará aquí).
 
 @router.get("/forecast_stat/", response_model=List[schemas.FactForecastStat])
 def read_forecast_stat_data_api(

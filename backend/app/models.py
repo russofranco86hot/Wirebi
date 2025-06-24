@@ -10,10 +10,8 @@ import uuid
 from .database import Base
 
 # Definir los ENUMs fuera de las clases para reusabilidad
-# Asegúrate de que todos los valores posibles de tus ENUMs estén listados aquí
 source_enum = ENUM('shipments', 'sales', 'order', name='source', create_type=False)
-history_source_enum = ENUM('shipments', 'sales', name='history_source', create_type=False) # Para forecast_versions
-
+history_source_enum = ENUM('shipments', 'sales', name='history_source', create_type=False)
 
 # --- DIMENSIONAL TABLES ---
 class DimKeyFigure(Base):
@@ -62,7 +60,7 @@ class ForecastVersion(Base):
     name = Column(Text, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     created_by = Column(UUID(as_uuid=True))
-    history_source = Column(history_source_enum) # Usar el ENUM específico
+    history_source = Column(history_source_enum)
     model_used = Column(Text)
     forecast_run_id = Column(UUID(as_uuid=True), ForeignKey("forecast_smoothing_parameters.forecast_run_id"))
     notes = Column(Text)

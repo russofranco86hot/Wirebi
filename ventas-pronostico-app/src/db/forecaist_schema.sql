@@ -14,14 +14,10 @@
     IS_TEMPLATE = False;
 */
 
-DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
-
--- OTORGAR TODOS LOS PRIVILEGIOS AL ESQUEMA PUBLIC A TU USUARIO
-GRANT ALL PRIVILEGES ON SCHEMA public TO fr94901;
-
--- OTORGAR PRIVILEGIOS POR DEFECTO PARA TABLAS FUTURAS EN ESE ESQUEMA
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO fr94901;
+DROP SCHEMA public CASCADE; -- Eliminar todo en el esquema público
+CREATE SCHEMA public;      -- Crear un esquema público nuevo
+GRANT ALL PRIVILEGES ON SCHEMA public TO fr94901; -- Dar permisos a tu usuario en el nuevo esquema
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO fr94901; -- Permisos para futuras tablas
 
 -- Asegurarse de que el usuario tenga permisos en el esquema public
 GRANT ALL PRIVILEGES ON SCHEMA public TO fr94901;
@@ -110,7 +106,7 @@ CREATE TABLE IF NOT EXISTS forecast_versions (
 CREATE TABLE IF NOT EXISTS fact_history (
     client_id UUID NOT NULL,
     sku_id UUID NOT NULL,
-    client_final_id UUID NOT NULL, -- You might reconsider this if it's always client_id-sku_id
+    client_final_id UUID NOT NULL,
     period DATE NOT NULL,
     source TEXT CHECK (source IN ('shipments', 'sales')),
     key_figure_id INT NOT NULL,
@@ -120,12 +116,10 @@ CREATE TABLE IF NOT EXISTS fact_history (
     user_id UUID,
     PRIMARY KEY (client_id, sku_id, client_final_id, period, key_figure_id),
     FOREIGN KEY (key_figure_id) REFERENCES dim_keyfigures(key_figure_id),
-    FOREIGN KEY (client_id) REFERENCES dim_clients(client_id), -- New FK
-    FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id) -- New FK
-    -- FOREIGN KEY (client_final_id) REFERENCES dim_client_finals(client_final_id) -- If you decide to make it a dim table
+    FOREIGN KEY (client_id) REFERENCES dim_clients(client_id),
+    FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id),
+    UNIQUE (client_id, sku_id, client_final_id, period, key_figure_id, source)
 );
-
-ADD CONSTRAINT fact_history_unique UNIQUE (client_id, sku_id, client_final_id, period, key_figure_id, source);
 
 CREATE TABLE IF NOT EXISTS fact_forecast_stat (
     client_id UUID NOT NULL,
