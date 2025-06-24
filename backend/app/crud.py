@@ -1,14 +1,14 @@
-# backend/app/crud.py - Versión corregida y completa para forecaist_schema.sql
+# backend/app/crud.py - Versión completa y corregida para Fase 2
 
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import date, datetime
 import uuid
 
 from . import models, schemas
 
-# --- Operaciones CRUD para DimClients, DimSkus, DimKeyFigures, DimAdjustmentType ---
+# --- Operaciones CRUD para DimClients, DimSkus, DimKeyFigures, DimAdjustmentType (sin cambios) ---
 
 def get_client_by_name(db: Session, client_name: str):
     return db.query(models.DimClient).filter(models.DimClient.client_name == client_name).first()
@@ -71,7 +71,7 @@ def get_adjustment_types(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.DimAdjustmentType).offset(skip).limit(limit).all()
 
 
-# --- Operaciones CRUD para FactHistory (Actualizadas para 'source' en PK) ---
+# --- Operaciones CRUD para FactHistory ---
 def get_fact_history(
     db: Session, 
     client_id: uuid.UUID, 
@@ -79,7 +79,7 @@ def get_fact_history(
     client_final_id: uuid.UUID, 
     period: date, 
     key_figure_id: int,
-    source: str # 'source' es parte de la PK
+    source: str
 ):
     return db.query(models.FactHistory).options(
         joinedload(models.FactHistory.client),
@@ -91,7 +91,7 @@ def get_fact_history(
         models.FactHistory.client_final_id == client_final_id,
         models.FactHistory.period == period,
         models.FactHistory.key_figure_id == key_figure_id,
-        models.FactHistory.source == source # Filtrar por source
+        models.FactHistory.source == source
     ).first()
 
 def get_fact_history_data(
@@ -101,7 +101,7 @@ def get_fact_history_data(
     start_period: Optional[date] = None,
     end_period: Optional[date] = None,
     key_figure_ids: Optional[List[int]] = None,
-    sources: Optional[List[str]] = None, # Nuevo parámetro para filtrar por source
+    sources: Optional[List[str]] = None,
     skip: int = 0,
     limit: int = 100
 ) -> List[models.FactHistory]:
@@ -120,7 +120,7 @@ def get_fact_history_data(
         query = query.filter(models.FactHistory.period <= end_period)
     if key_figure_ids:
         query = query.filter(models.FactHistory.key_figure_id.in_(key_figure_ids))
-    if sources: # Nuevo filtro por source
+    if sources:
         query = query.filter(models.FactHistory.source.in_(sources))
     
     return query.offset(skip).limit(limit).all()
@@ -148,7 +148,7 @@ def update_fact_history(
     client_final_id: uuid.UUID,
     period: date,
     key_figure_id: int,
-    source: str, # 'source' a los parámetros de identificación
+    source: str,
     fact_history_update: schemas.FactHistoryBase,
     user_id: uuid.UUID
 ):
@@ -169,7 +169,7 @@ def delete_fact_history(
     client_final_id: uuid.UUID, 
     period: date, 
     key_figure_id: int,
-    source: str # 'source' a los parámetros de identificación
+    source: str
 ):
     db_fact_history = get_fact_history(db, client_id, sku_id, client_final_id, period, key_figure_id, source)
     if db_fact_history:
@@ -178,22 +178,51 @@ def delete_fact_history(
     return db_fact_history
 
 
-# --- Operaciones CRUD para Tablas Auxiliares y Hechos Adicionales (Básicas GET) ---
-# Incluidas para que el modelo SQLAlchemy esté completo y accesible si es necesario,
-# pero solo con funciones GET básicas por ahora.
-
+# --- Operaciones CRUD para ForecastSmoothingParameters (NUEVAS/EXTENDIDAS) ---
 def get_forecast_smoothing_parameter(db: Session, forecast_run_id: uuid.UUID):
     return db.query(models.ForecastSmoothingParameter).filter(models.ForecastSmoothingParameter.forecast_run_id == forecast_run_id).first()
 
 def get_forecast_smoothing_parameters(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.ForecastSmoothingParameter).offset(skip).limit(limit).all()
 
+def create_forecast_smoothing_parameter(db: Session, forecast_run_id: uuid.UUID, client_id: uuid.UUID, alpha: float, user_id: uuid.UUID):
+    db_param = models.ForecastSmoothingParameter(
+        forecast_run_id=forecast_run_id,
+        client_id=client_id,
+        alpha=alpha,
+        user_id=user_id
+    )
+    db.add(db_param)
+    db.commit()
+    db.refresh(db_param)
+    return db_param
+
+
+# --- Operaciones CRUD para ForecastVersions (NUEVAS/EXTENDIDAS) ---
 def get_forecast_version(db: Session, version_id: uuid.UUID):
     return db.query(models.ForecastVersion).filter(models.ForecastVersion.version_id == version_id).first()
 
 def get_forecast_versions(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.ForecastVersion).offset(skip).limit(limit).all()
 
+def create_forecast_version(db: Session, version: schemas.ForecastVersionCreate, created_by_user_id: uuid.UUID):
+    db_version = models.ForecastVersion(
+        version_id=uuid.uuid4(), # Se genera un nuevo UUID para la versión
+        client_id=version.client_id,
+        name=version.name,
+        created_by=created_by_user_id,
+        history_source=version.history_source,
+        model_used=version.model_used,
+        forecast_run_id=version.forecast_run_id,
+        notes=version.notes
+    )
+    db.add(db_version)
+    db.commit()
+    db.refresh(db_version)
+    return db_version
+
+
+# --- Operaciones CRUD para FactForecastStat (NUEVAS/EXTENDIDAS) ---
 def get_fact_forecast_stat(
     db: Session, 
     client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date
@@ -211,6 +240,8 @@ def get_fact_forecast_stat_data(
     sku_ids: Optional[List[uuid.UUID]] = None,
     start_period: Optional[date] = None,
     end_period: Optional[date] = None,
+    # key_figure_ids no aplica directamente a fact_forecast_stat ya que representa un solo tipo de forecast
+    forecast_run_ids: Optional[List[uuid.UUID]] = None, # Filtrar por corrida de forecast
     skip: int = 0,
     limit: int = 100
 ) -> List[models.FactForecastStat]:
@@ -227,8 +258,21 @@ def get_fact_forecast_stat_data(
         query = query.filter(models.FactForecastStat.period >= start_period)
     if end_period:
         query = query.filter(models.FactForecastStat.period <= end_period)
+    if forecast_run_ids:
+        query = query.filter(models.FactForecastStat.forecast_run_id.in_(forecast_run_ids))
     return query.offset(skip).limit(limit).all()
 
+def create_fact_forecast_stat_batch(db: Session, forecast_records: List[Dict[str, Any]]):
+    """
+    Inserta múltiples registros de pronóstico estadístico en batch.
+    """
+    # Usamos models.FactForecastStat para mapear los diccionarios a objetos ORM
+    db.bulk_insert_mappings(models.FactForecastStat, forecast_records)
+    db.commit()
+    return len(forecast_records)
+
+
+# --- Operaciones CRUD para FactAdjustments (Básicas GET) ---
 def get_fact_adjustments(
     db: Session, 
     client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date, 
@@ -274,6 +318,7 @@ def get_fact_adjustments_data(
         query = query.filter(models.FactAdjustments.adjustment_type_id.in_(adjustment_type_ids))
     return query.offset(skip).limit(limit).all()
 
+# --- Operaciones CRUD para FactForecastVersioned (Básicas GET) ---
 def get_fact_forecast_versioned(
     db: Session, 
     version_id: uuid.UUID, 
@@ -321,6 +366,7 @@ def get_fact_forecast_versioned_data(
     
     return query.offset(skip).limit(limit).all()
 
+# --- Operaciones CRUD para ManualInputComments (Básicas GET) ---
 def get_manual_input_comment(
     db: Session, 
     client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date, key_figure_id: int

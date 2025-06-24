@@ -1,0 +1,42 @@
+Metadata-Version: 2.1
+Name: adagio
+Version: 0.2.6
+Summary: The Dag IO Framework for Fugue projects
+Home-page: http://github.com/fugue-project/adagio
+Author: Han Wang
+Author-email: goodwanghan@gmail.com
+License: Apache-2.0
+Keywords: adagio dag directed acyclic graph workflow
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3 :: Only
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: triad>=0.6.1
+
+# A-DAG-IO Framework
+
+[![GitHub release](https://img.shields.io/github/release/fugue-project/adagio.svg)](https://GitHub.com/fugue-project/adagio)
+[![PyPI pyversions](https://img.shields.io/pypi/pyversions/adagio.svg)](https://pypi.python.org/pypi/adagio/)
+[![PyPI license](https://img.shields.io/pypi/l/adagio.svg)](https://pypi.python.org/pypi/adagio/)
+[![PyPI version](https://badge.fury.io/py/adagio.svg)](https://pypi.python.org/pypi/adagio/)
+[![codecov](https://codecov.io/gh/fugue-project/adagio/branch/master/graph/badge.svg?token=P82AEINHFY)](https://codecov.io/gh/fugue-project/adagio)
+
+[Join Fugue-Project on Slack](https://join.slack.com/t/fugue-project/shared_invite/zt-he6tcazr-OCkj2GEv~J9UYoZT3FPM4g)
+
+A Dag IO framework for [Fugue projects](https://github.com/fugue-project)
+
+## Installation
+
+```
+pip install adagio
+```

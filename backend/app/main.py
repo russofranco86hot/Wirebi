@@ -1,10 +1,12 @@
+# backend/app/main.py (Tu versión actual)
+
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware # Importa el middleware CORS
 from sqlalchemy.orm import Session
 
 from . import models
 from .database import engine, get_db
-from .routers import clients, skus, keyfigures, sales_forecast # <-- ¡Asegúrate de que 'sales_forecast' esté aquí!
+from .routers import clients, skus, keyfigures, sales_forecast 
 
 # Crea las tablas en la base de datos (solo si no existen)
 models.Base.metadata.create_all(bind=engine)
@@ -21,8 +23,8 @@ app = FastAPI(
 origins = [
     "http://localhost",
     "http://localhost:5173",
-    "http://127.0.0.1",       # Añade esto
-    "http://127.0.0.1:5173",  # Añade esto
+    "http://127.0.0.1",       
+    "http://127.0.0.1:5173",  
     # Otros orígenes si tu frontend se desplegara en un dominio diferente
 ]
 
@@ -40,7 +42,7 @@ app.add_middleware(
 app.include_router(clients.router)
 app.include_router(skus.router)
 app.include_router(keyfigures.router)
-app.include_router(sales_forecast.router) # <-- ¡Asegúrate de que esta línea exista!
+app.include_router(sales_forecast.router)
 
 @app.get("/")
 async def root():

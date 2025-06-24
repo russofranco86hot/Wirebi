@@ -1,0 +1,12 @@
+[fugue.plugins]
+dask = fugue_dask.registry [dask]
+duckdb = fugue_duckdb.registry [duckdb]
+ibis = fugue_ibis [ibis]
+polars = fugue_polars.registry [polars]
+ray = fugue_ray.registry [ray]
+spark = fugue_spark.registry [spark]
+
+[pytest11]
+fugue_test = fugue_test
+fugue_test_fixtures = fugue_test.fixtures
+

@@ -1,32 +1,29 @@
-// frontend/src/api.js - Versión FINAL y Corregida para filtros y múltiples llamadas
+// frontend/src/api.js - Versión FINAL y Corregida para Fase 2
 
-const API_BASE_URL = 'http://localhost:8000'; // Asegúrate de que esta URL sea la correcta de tu backend FastAPI
+const API_BASE_URL = 'http://localhost:8000'; 
 
-// Función auxiliar para manejar respuestas y errores HTTP
 const handleApiResponse = async (response, defaultErrorMessage) => {
   if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({})); // Intenta parsear, si falla, un objeto vacío
-    // Si la API devuelve un 404, pero es porque no encontró datos (el detalle de FastAPI),
-    // no lo tratamos como un error fatal, simplemente devolvemos un array vacío.
+    const errorBody = await response.json().catch(() => ({})); 
     if (response.status === 404 && errorBody.detail && errorBody.detail.includes("No historical data found matching criteria")) {
       return [];
     }
     if (response.status === 404 && errorBody.detail && errorBody.detail.includes("No versioned forecast data found matching criteria")) {
         return [];
     }
-    // Para otros errores, lanzar una excepción
+    if (response.status === 404 && errorBody.detail && errorBody.detail.includes("No forecast stat data found matching criteria")) {
+        return [];
+    }
     throw new Error(`HTTP error! status: ${response.status} - ${errorBody.detail || defaultErrorMessage || response.statusText}`);
   }
   return response.json();
 };
 
-// Función auxiliar para construir la URL con parámetros de consulta
 const buildQueryParams = (paramsObj) => {
   const params = new URLSearchParams();
   for (const key in paramsObj) {
     const value = paramsObj[key];
 
-    // Solo añadir el parámetro si tiene un valor significativo
     if (value !== null && value !== undefined && value !== '') {
       if (Array.isArray(value)) {
         if (value.length > 0) {
@@ -40,8 +37,6 @@ const buildQueryParams = (paramsObj) => {
   const queryString = params.toString();
   return queryString ? `?${queryString}` : '';
 };
-
-// --- Funciones de Fetch para tus Routers ---
 
 export const fetchClients = async () => {
   const response = await fetch(`${API_BASE_URL}/clients/`);
@@ -94,8 +89,43 @@ export const fetchForecastVersionedData = async ({ versionIds, clientIds, skuIds
     return handleApiResponse(response, "Error al cargar datos de pronóstico versionado.");
 };
 
-// Puedes añadir más funciones aquí si vas a usar otros endpoints GET
-export const fetchForecastVersions = async () => {
-    const response = await fetch(`${API_BASE_URL}/data/versions/`);
-    return handleApiResponse(response, "Error al cargar versiones de pronóstico.");
+export const generateForecast = async ({ clientId, skuId, historySource, smoothingAlpha, modelName, forecastHorizon }) => {
+    const params = {
+        client_id: clientId,
+        sku_id: skuId,
+        history_source: historySource,
+        smoothing_alpha: smoothingAlpha,
+        model_name: modelName,
+        forecast_horizon: forecastHorizon,
+    };
+
+    const queryString = buildQueryParams(params);
+    const url = `${API_BASE_URL}/data/forecast/generate/${queryString}`;
+
+    console.log("Generating forecast with URL:", url);
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+    });
+    return handleApiResponse(response, "Error al generar el pronóstico.");
+};
+
+// --- NUEVA FUNCIÓN: Para obtener datos de fact_forecast_stat ---
+export const fetchForecastStatData = async ({ clientIds, skuIds, startPeriod, endPeriod, forecastRunIds }) => {
+    const params = {
+        client_ids: clientIds,
+        sku_ids: skuIds,
+        start_period: startPeriod,
+        end_period: endPeriod,
+        forecast_run_ids: forecastRunIds,
+    };
+
+    const queryString = buildQueryParams(params);
+    const url = `${API_BASE_URL}/data/forecast_stat/${queryString}`;
+
+    console.log("Fetching forecast stat data from:", url);
+    const response = await fetch(url);
+    return handleApiResponse(response, "Error al cargar datos de pronóstico estadístico.");
 };

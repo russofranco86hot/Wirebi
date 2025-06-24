@@ -1,0 +1,2 @@
+[nbdev]
+utilsforecast = utilsforecast._modidx:d

@@ -1,9 +1,14 @@
-fastapi
-uvicorn
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.11.0          # Versión conocida por compatibilidad
+statsmodels==0.14.0    # Versión conocida por compatibilidad
+
+fastapi[all]==0.111.0  # Versión más reciente estable (o similar a la que tenías)
+uvicorn==0.29.0        # Versión más reciente estable (o similar)
 psycopg2-binary[extra]
-sqlalchemy 
+sqlalchemy
 python-dotenv
-pydantic-settings
-app
-python-multipart
-fastapi[all]
+statsforecast==1.7.0   # Versión específica para compatibilidad
+pmdarima==2.0.4        # Versión específica para compatibilidad
+scikit-learn==1.4.2    # Versión más reciente estable (o similar)
+pydantic-settings==2.2.1 # Versión más reciente estable (o similar)

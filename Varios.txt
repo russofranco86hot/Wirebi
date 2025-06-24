@@ -1,3 +1,6 @@
+-- RECREAR LA BASE DE DATOS! 
+D:\Descargas\Tincho\Wirebi-russofranco86hot\Wirebi\WireBI_db.bat
+
 Ir a Visual code, y dar permisos parar correr scripts:
 1) Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 2) Ir al path donde esta el backend, por ejemplo:
@@ -15,6 +18,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 -----------------------------------------------------------------------
 
 Para REACT:
+
+(borrar todo instalado segun package y reinstalar)
+Remove-Item -Recurse -Force node_modules
+Remove-Item package-lock.json
+npm install 
 
 1) Asegurarte de tener (sino instalar) NODE.JS y NPM.
 

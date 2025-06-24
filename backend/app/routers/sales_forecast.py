@@ -6,7 +6,7 @@ from typing import List, Optional
 from datetime import date
 import uuid
 
-from .. import crud, schemas, models
+from .. import crud, schemas, models, forecast_engine # Importa forecast_engine
 from ..database import get_db
 
 router = APIRouter(
@@ -118,7 +118,7 @@ def delete_history_data(
     client_final_id: uuid.UUID,
     period: date,
     key_figure_id: int,
-    source: str, # Añadir source a la ruta para identificar
+    source: str,
     db: Session = Depends(get_db)
 ):
     """
@@ -138,20 +138,59 @@ def delete_history_data(
     return {"message": "Historical data entry deleted successfully"}
 
 
-# --- Endpoints para otras tablas de hechos y auxiliares ---
-# Estos simplemente devuelven datos si existen, o una lista vacía si la tabla está vacía.
+# --- Endpoint para disparar la generación de Forecast Estadístico ---
+@router.post("/forecast/generate/", response_model=dict, status_code=status.HTTP_201_CREATED)
+def generate_forecast_api(
+    client_id: uuid.UUID = Query(..., description="Client UUID for which to generate forecast"),
+    sku_id: uuid.UUID = Query(..., description="SKU UUID for which to generate forecast"),
+    history_source: str = Query(..., description="Source of historical data ('sales', 'shipments', or 'order')"), # Asegurar 'order'
+    smoothing_alpha: float = Query(0.5, ge=0.0, le=1.0, description="Alpha parameter for exponential smoothing (0.0 to 1.0)"),
+    model_name: str = Query("ETS", description="Statistical model to use for forecast (e.g., 'ETS', 'ARIMA')"),
+    forecast_horizon: int = Query(12, ge=1, description="Number of periods to forecast ahead"),
+    db: Session = Depends(get_db)
+):
+    """
+    Triggers the generation of a statistical forecast for a given SKU-Client.
+    The generated forecast is stored in fact_forecast_stat.
+    """
+    db_client = crud.get_client(db, client_id=client_id)
+    db_sku = crud.get_sku(db, sku_id=sku_id)
+    if not db_client or not db_sku:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client or SKU not found.")
+    
+    if history_source not in ['sales', 'order', 'shipments']:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid history_source. Must be 'sales', 'order', or 'shipments'.")
 
+    try:
+        result = forecast_engine.generate_forecast(
+            db=db,
+            client_id=client_id,
+            sku_id=sku_id,
+            history_source=history_source,
+            smoothing_alpha=smoothing_alpha,
+            model_name=model_name,
+            forecast_horizon=forecast_horizon
+        )
+        return {"message": "Forecast generation requested successfully", "result": result}
+    except RuntimeError as e: # Captura el RuntimeError del forecast_engine
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate forecast: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred during forecast generation: {e}")
+
+# --- Endpoints para FactForecastStat ---
 @router.get("/forecast_stat/", response_model=List[schemas.FactForecastStat])
 def read_forecast_stat_data_api(
     client_ids: List[uuid.UUID] = Query([], description="Filter by client UUIDs"),
     sku_ids: List[uuid.UUID] = Query([], description="Filter by SKU UUIDs"),
     start_period: Optional[date] = Query(None, description="Filter data from this period (YYYY-MM-DD)"),
     end_period: Optional[date] = Query(None, description="Filter data up to this period (YYYY-MM-DD)"),
+    forecast_run_ids: List[uuid.UUID] = Query([], description="Filter by specific forecast run UUIDs"),
     skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 ):
-    data = crud.get_fact_forecast_stat_data(db, client_ids, sku_ids, start_period, end_period, skip, limit)
-    return data # Devuelve lista vacía si no hay datos
+    data = crud.get_fact_forecast_stat_data(db, client_ids, sku_ids, start_period, end_period, forecast_run_ids, skip, limit)
+    return data
 
+# --- Endpoints para FactAdjustments ---
 @router.get("/adjustments/", response_model=List[schemas.FactAdjustments])
 def read_adjustments_data_api(
     client_ids: List[uuid.UUID] = Query([], description="Filter by client UUIDs"),
@@ -163,8 +202,9 @@ def read_adjustments_data_api(
     skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 ):
     data = crud.get_fact_adjustments_data(db, client_ids, sku_ids, start_period, end_period, key_figure_ids, adjustment_type_ids, skip, limit)
-    return data # Devuelve lista vacía si no hay datos
+    return data
 
+# --- Endpoints para FactForecastVersioned ---
 @router.get("/forecast/versioned/", response_model=List[schemas.FactForecastVersioned])
 def read_forecast_versioned_data_api(
     version_ids: List[uuid.UUID] = Query([], description="Filter by forecast version UUIDs"),
@@ -176,8 +216,9 @@ def read_forecast_versioned_data_api(
     skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 ):
     data = crud.get_fact_forecast_versioned_data(db, version_ids, client_ids, sku_ids, start_period, end_period, key_figure_ids, skip, limit)
-    return data # Devuelve lista vacía si no hay datos
+    return data
 
+# --- Endpoints para ManualInputComments ---
 @router.get("/comments/", response_model=List[schemas.ManualInputComment])
 def read_manual_input_comments_api(
     client_ids: List[uuid.UUID] = Query([], description="Filter by client UUIDs"),
@@ -188,19 +229,34 @@ def read_manual_input_comments_api(
     skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 ):
     data = crud.get_manual_input_comment_data(db, client_ids, sku_ids, start_period, end_period, key_figure_ids, skip, limit)
-    return data # Devuelve lista vacía si no hay datos
+    return data
 
+# --- Endpoints para ForecastVersions ---
 @router.get("/versions/", response_model=List[schemas.ForecastVersion])
-def read_forecast_versions_api(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    versions = crud.get_forecast_versions(db, skip=skip, limit=limit)
-    return versions # Devuelve lista vacía si no hay datos
+def read_forecast_versions_api(
+    client_id: Optional[uuid.UUID] = Query(None, description="Filter versions by client UUID"),
+    skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
+):
+    query = db.query(models.ForecastVersion)
+    if client_id:
+        query = query.filter(models.ForecastVersion.client_id == client_id)
+    versions = query.offset(skip).limit(limit).all()
+    return versions
 
+# --- Endpoints para ForecastSmoothingParameters ---
 @router.get("/smoothing_parameters/", response_model=List[schemas.ForecastSmoothingParameter])
-def read_forecast_smoothing_parameters_api(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    params = crud.get_forecast_smoothing_parameters(db, skip=skip, limit=limit)
-    return params # Devuelve lista vacía si no hay datos
+def read_forecast_smoothing_parameters_api(
+    client_id: Optional[uuid.UUID] = Query(None, description="Filter parameters by client UUID"),
+    skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
+):
+    query = db.query(models.ForecastSmoothingParameter)
+    if client_id:
+        query = query.filter(models.ForecastSmoothingParameter.client_id == client_id)
+    params = query.offset(skip).limit(limit).all()
+    return params
 
+# --- Endpoints para DimAdjustmentTypes ---
 @router.get("/adjustment_types/", response_model=List[schemas.DimAdjustmentType])
 def read_adjustment_types_api(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    types = crud.get_adjustment_types(db, skip=skip, limit=limit)
-    return types # Devuelve lista vacía si no hay datos
+    types = crud.get_adjustment_types(db, skip, limit)
+    return types

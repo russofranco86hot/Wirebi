@@ -1,0 +1,12 @@
+fugue
+fugue_contrib
+fugue_dask
+fugue_duckdb
+fugue_ibis
+fugue_notebook
+fugue_polars
+fugue_ray
+fugue_spark
+fugue_sql
+fugue_test
+fugue_version
