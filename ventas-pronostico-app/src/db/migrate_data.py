@@ -1,4 +1,4 @@
-# ventas-pronostico-app/src/db/migrate_data.py - Versión Final
+# ventas-pronostico-app/src/db/migrate_data.py - Versión Final (Añadir KeyFigure 'Shipments')
 
 import pandas as pd
 import psycopg2
@@ -40,14 +40,13 @@ def insert_dim_keyfigures(conn):
     """
     key_figures_data = [
         (1, 'Sales', 'history', True, 1),
-        (2, 'Order', 'history', True, 2), # 'Order' ahora también aplica a 'history' para este contexto de carga
-        # Asegúrate de que estos key_figure_id coincidan con tu lógica o DB.xlsx
-        # Si tienes otras key figures en tu DB.xlsx que quieres cargar en fact_history, añádelas aquí:
-        # (3, 'Another Historical Key Figure', 'history', True, 3),
-        # Y si tienes key figures de forecast que no vienen del excel pero deben existir:
-        # (4, 'Statistical Forecast', 'forecast', False, 4),
-        # (5, 'Final Forecast', 'forecast', True, 5),
-        # (6, 'Override', 'forecast', True, 6),
+        (2, 'Order', 'history', True, 2), # 'Order' ahora también aplica a 'history'
+        (3, 'Shipments', 'history', True, 3), # Añadir KeyFigure para 'Shipments'
+        # Asegúrate de que estos key_figure_id no colisionen y que se alinee con tu DB.xlsx si tiene 'Shipments'.
+        # Y si tienes otras key figures de forecast que deben existir pero no vienen del excel:
+        (4, 'Statistical Forecast', 'forecast', False, 4), # Usado por forecast_engine
+        # (5, 'Historia Suavizada', 'history', False, 5), # Usado por forecast_engine
+        # Puedes añadir más aquí: (6, 'Final Forecast', 'forecast', True, 6), (7, 'Override', 'forecast', True, 7),
     ]
     try:
         with conn.cursor() as cur:
@@ -93,17 +92,23 @@ def migrate_db_xlsx_to_postgres(file_path):
         df['period'] = pd.to_datetime(df['period']).dt.date
 
         with get_db_connection() as conn:
-            insert_dim_keyfigures(conn) # Asegurarse que 'Sales' y 'Order' estén definidos
+            insert_dim_keyfigures(conn) 
 
             sales_kf_id = get_key_figure_id_by_name(conn, 'Sales')
             order_kf_id = get_key_figure_id_by_name(conn, 'Order')
-
+            # Obtener el KF ID para 'Shipments'
+            shipments_kf_id = get_key_figure_id_by_name(conn, 'Shipments') # Nuevo KF ID
+            
             if sales_kf_id is None:
                 print("Error: 'Sales' KeyFigure ID no encontrado en dim_keyfigures. Asegúrate de que exista.")
                 return
             if order_kf_id is None:
                 print("Error: 'Order' KeyFigure ID no encontrado en dim_keyfigures. Asegúrate de que exista.")
                 return
+            if shipments_kf_id is None:
+                print("Error: 'Shipments' KeyFigure ID no encontrado en dim_keyfigures. Asegúrate de que exista.")
+                return
+
 
             history_data_to_insert = []
             
@@ -134,13 +139,9 @@ def migrate_db_xlsx_to_postgres(file_path):
                     conn.commit()
                     print("Nombres de clientes y SKUs insertados/verificados en tablas dimensionales.")
 
-                    # Insertar un registro dummy en forecast_smoothing_parameters y forecast_versions
-                    # si no existen, para satisfacer FKs en caso de que estas tablas existan en el esquema
-                    # pero aún no se llenen con lógica de forecast.
                     initial_forecast_run_id = uuid.uuid4()
                     initial_version_id = uuid.uuid4()
                     
-                    # Aseguramos un client_id válido para los dummies, usamos el primero o uno fijo
                     dummy_client_id_for_forecast = next(iter(client_name_to_uuid_map.values()), uuid.UUID('a1b2c3d4-e5f6-7890-1234-567890abcdef'))
                     
                     cur.execute("""
@@ -193,6 +194,9 @@ def migrate_db_xlsx_to_postgres(file_path):
                 elif key_figure_name == 'Order':
                     kf_id_to_use = order_kf_id
                     source_to_use = 'order'
+                elif key_figure_name == 'Shipments': # Manejar 'Shipments' si viene del Excel
+                    kf_id_to_use = shipments_kf_id
+                    source_to_use = 'shipments'
                 else:
                     print(f"Advertencia: KeyFigure '{key_figure_name}' no reconocida. Fila omitida.")
                     continue

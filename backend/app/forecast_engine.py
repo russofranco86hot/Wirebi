@@ -1,4 +1,4 @@
-# backend/app/forecast_engine.py - Versión con Historia Suavizada
+# backend/app/forecast_engine.py - Versión con soporte para 'shipments'
 
 import pandas as pd
 from statsforecast import StatsForecast
@@ -34,22 +34,18 @@ def calculate_smoothed_history(data_df: pd.DataFrame, alpha: float) -> pd.DataFr
     if data_df.empty:
         return pd.DataFrame(columns=['ds', 'y_smoothed'])
 
-    # Ordenar por fecha para asegurar que el suavizado sea secuencial
     data_df = data_df.sort_values(by='ds').reset_index(drop=True)
 
     smoothed_values = []
-    # Inicializar el primer valor suavizado con el primer valor crudo
     if not data_df.empty:
         smoothed_values.append(data_df.iloc[0]['y'])
     else:
         return pd.DataFrame(columns=['ds', 'y_smoothed'])
 
     for i in range(1, len(data_df)):
-        # Formula de suavizado exponencial simple: S_t = alpha * Y_t + (1 - alpha) * S_{t-1}
         next_smoothed_value = alpha * data_df.iloc[i]['y'] + (1 - alpha) * smoothed_values[-1]
         smoothed_values.append(next_smoothed_value)
     
-    # Crear un DataFrame con los resultados suavizados
     smoothed_df = pd.DataFrame({
         'ds': data_df['ds'],
         'y_smoothed': smoothed_values
@@ -62,23 +58,25 @@ def generate_forecast(
     client_id: uuid.UUID,
     sku_id: uuid.UUID,
     history_source: str, # 'sales' o 'shipments'
-    smoothing_alpha: float, # Parámetro alpha para suavizado (si se usa)
-    model_name: str, # "ETS", "ARIMA", etc.
-    forecast_horizon: int = 12 # Cuántos períodos hacia adelante pronosticar
+    smoothing_alpha: float, 
+    model_name: str, 
+    forecast_horizon: int = 12 
 ):
-    """
-    Genera un pronóstico para un SKU-Cliente dado, usando su historia,
-    y guarda la historia suavizada y el pronóstico.
-    """
     logger.info(f"Iniciando generación de forecast para Client: {client_id}, SKU: {sku_id}")
 
     history_kf_id_to_fetch = None
+    # --- CAMBIO AQUÍ: Añadir mapeo para 'shipments' ---
     if history_source == 'sales':
         history_kf_id_to_fetch = 1 
     elif history_source == 'order':
         history_kf_id_to_fetch = 2
+    elif history_source == 'shipments':
+        history_kf_id_to_fetch = 3 # Asignar un nuevo KF ID para 'shipments'
+                                  # Asegúrate de que este ID (3) no colisione con otros
+                                  # y que lo definamos en dim_keyfigures si no existe.
     else:
         raise ValueError(f"Fuente histórica '{history_source}' no reconocida para obtener Key Figure ID.")
+    # --- FIN CAMBIO ---
 
     # 1. Obtener la historia cruda desde fact_history
     historical_data_raw = crud.get_fact_history_data(
@@ -101,13 +99,10 @@ def generate_forecast(
     history_df_for_processing['ds'] = pd.to_datetime(history_df_for_processing['ds'])
     history_df_for_processing = history_df_for_processing.sort_values(by=['unique_id', 'ds']).reset_index(drop=True)
 
-    # --- CAMBIO AQUÍ: Verificar el tamaño del dataset antes del pronóstico ---
     if history_df_for_processing.empty or len(history_df_for_processing) < MIN_FORECAST_POINTS:
         logger.warning(f"Dataset muy pequeño para pronóstico de Client: {client_id}, SKU: {sku_id}. Puntos: {len(history_df_for_processing)}")
         raise RuntimeError(f"Conjunto de datos histórico demasiado pequeño ({len(history_df_for_processing)} puntos). Se requieren al menos {MIN_FORECAST_POINTS} puntos para generar el pronóstico.")
-    # --- FIN CAMBIO ---
-
-    # --- CAMBIO AQUÍ: Calcular Historia Suavizada y Guardarla ---
+    
     smoothed_history_df = calculate_smoothed_history(history_df_for_processing, smoothing_alpha)
     
     # Crear la KeyFigure "Historia Suavizada" si no existe
@@ -116,9 +111,11 @@ def generate_forecast(
         db_kf_smoothed_history = crud.create_key_figure(
             db=db,
             key_figure=schemas.DimKeyFigureCreate(
-                key_figure_id=3, # ID arbitrario, asegúrate de que sea único (ej. 3 para después de 1 y 2)
+                key_figure_id=5, # CAMBIO AQUÍ: ID arbitrario para "Historia Suavizada", asegúrate de que sea único
+                                 # Ahora que 'shipments' usa 3, la 'Historia Suavizada' podría ser 5 o un ID libre.
+                                 # Usaremos 5, si 4 ya se usó para "Statistical Forecast"
                 name="Historia Suavizada",
-                applies_to="history", # Aplica a history
+                applies_to="history",
                 editable=False,
                 order=3 
             )
@@ -126,20 +123,16 @@ def generate_forecast(
         logger.info("Created DimKeyFigure for 'Historia Suavizada'.")
     smoothed_history_kf_id = db_kf_smoothed_history.key_figure_id
 
-    # Preparar y guardar registros de historia suavizada en fact_history
     smoothed_records_to_insert = []
-    # Obtener un client_final_id de un registro histórico existente
     client_final_id_for_smoothed = historical_data_raw[0].client_final_id 
 
     for index, row in smoothed_history_df.iterrows():
-        # Usar el mismo source que la historia cruda para la historia suavizada.
-        # Esto asume que la historia suavizada se deriva de una fuente específica.
         smoothed_records_to_insert.append({
             "client_id": client_id,
             "sku_id": sku_id,
             "client_final_id": client_final_id_for_smoothed,
             "period": row['ds'].date(),
-            "source": history_source, # Misma fuente que la historia original
+            "source": history_source, 
             "key_figure_id": smoothed_history_kf_id,
             "value": row['y_smoothed'],
             "user_id": DEFAULT_USER_ID
@@ -161,15 +154,11 @@ def generate_forecast(
         ]
         extras.execute_values(cur, query_smoothed_history, smoothed_values_for_insert)
         logger.info(f"Insertados/actualizados {len(smoothed_records_to_insert)} registros de historia suavizada en fact_history.")
-        # db.commit() no aquí, el commit final es después de ambos inserts (smoothed y forecast_stat)
     except Exception as e:
         logger.error(f"Error al insertar historia suavizada: {e}")
         db.rollback() 
         raise RuntimeError(f"Error al guardar la historia suavizada en la DB: {e}")
-    # --- FIN CAMBIO ---
 
-
-    # 2. Seleccionar y ejecutar el modelo de Forecast (ahora usa history_df_for_processing)
     model_class = FORECAST_MODELS.get(model_name)
     if not model_class:
         raise ValueError(f"Modelo de forecast '{model_name}' no soportado.")
@@ -190,14 +179,13 @@ def generate_forecast(
     )
 
     try:
-        sf.fit(history_df_for_processing) # Usamos el DataFrame completo para el forecast
+        sf.fit(history_df_for_processing) 
         forecast_df = sf.predict(h=forecast_horizon)
         logger.info(f"Forecast generado con éxito para Client: {client_id}, SKU: {sku_id}")
     except Exception as e:
         logger.error(f"Error al ejecutar el forecast para Client: {client_id}, SKU: {sku_id}: {e}")
         raise RuntimeError(f"Error en el motor de pronóstico: {e}")
 
-    # 4. Guardar parámetros de la corrida de Forecast
     forecast_run_id = uuid.uuid4()
     crud.create_forecast_smoothing_parameter(
         db=db,
@@ -208,8 +196,6 @@ def generate_forecast(
     )
     logger.debug(f"Forecast smoothing parameter creado con ID: {forecast_run_id}")
 
-
-    # 5. Guardar resultados en fact_forecast_stat
     forecast_model_column_name = model_name
 
     db_kf_stat_forecast = crud.get_key_figure_by_name(db, "Statistical Forecast")
@@ -230,7 +216,7 @@ def generate_forecast(
 
     forecast_records = []
     for index, row in forecast_df.iterrows():
-        client_final_id_from_history = historical_data_raw[0].client_final_id # Ya sabemos que history_data_raw no está vacío
+        client_final_id_from_history = historical_data_raw[0].client_final_id 
 
         forecast_records.append({
             "client_id": client_id,
@@ -267,7 +253,7 @@ def generate_forecast(
             values_to_insert
         )
         
-        db.commit() # ¡COMMIT FINAL AQUÍ!
+        db.commit() 
         
         logger.info(f"Insertados/actualizados {len(forecast_records)} registros en fact_forecast_stat.")
     except Exception as e:

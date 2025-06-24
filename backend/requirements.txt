@@ -2,7 +2,7 @@ numpy==1.26.4
 pandas==2.2.2
 scipy==1.11.0          # Versión conocida por compatibilidad
 statsmodels==0.14.0    # Versión conocida por compatibilidad
-
+openpyxl==3.1.2
 fastapi[all]==0.111.0  # Versión más reciente estable (o similar a la que tenías)
 uvicorn==0.29.0        # Versión más reciente estable (o similar)
 psycopg2-binary[extra]

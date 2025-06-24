@@ -5,9 +5,8 @@ import { fetchClients, fetchSkus, fetchKeyFigures, fetchHistoricalData, fetchFor
 
 // Importaciones de AG Grid (Estas rutas son CORRECTAS para ag-grid-community)
 import { AgGridReact } from 'ag-grid-react';
-import 'ag-grid-community/styles/ag-grid.css'; // Estilos base
-import 'ag-grid-community/styles/ag-theme-alpine.css'; // Tema
-
+import 'ag-grid-community/styles/ag-grid.css';
+import 'ag-grid-community/styles/ag-theme-alpine.css';
 import SalesChart from './SalesChart'; 
 
 // --- Componente auxiliar para manejar la carga/error (PARA EVITAR ROMPER HOOKS) ---
