@@ -1,6 +1,6 @@
-# backend/app/schemas.py - Versión corregida para forecaist_schema.sql
+# backend/app/schemas.py - Versión corregida y completa para forecaist_schema.sql
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import date, datetime
 import uuid
@@ -50,7 +50,7 @@ class DimSku(DimSkuBase):
     class Config:
         from_attributes = True
 
-class DimAdjustmentTypeBase(BaseModel): # De forecaist_schema.sql
+class DimAdjustmentTypeBase(BaseModel):
     name: str
 
 class DimAdjustmentTypeCreate(DimAdjustmentTypeBase):
@@ -64,7 +64,7 @@ class DimAdjustmentType(DimAdjustmentTypeBase):
 
 # --- Esquemas para Tablas Auxiliares ---
 
-class ForecastSmoothingParameterBase(BaseModel): # De forecaist_schema.sql
+class ForecastSmoothingParameterBase(BaseModel):
     client_id: uuid.UUID
     alpha: float
     user_id: Optional[uuid.UUID] = None
@@ -80,7 +80,7 @@ class ForecastSmoothingParameter(ForecastSmoothingParameterBase):
     class Config:
         from_attributes = True
 
-class ForecastVersionBase(BaseModel): # De forecaist_schema.sql
+class ForecastVersionBase(BaseModel):
     client_id: uuid.UUID
     name: str
     created_by: Optional[uuid.UUID] = None
@@ -95,8 +95,8 @@ class ForecastVersionCreate(ForecastVersionBase):
 class ForecastVersion(ForecastVersionBase):
     version_id: uuid.UUID
     created_at: datetime
-    client: DimClient # Relación con DimClient
-    # forecast_run: Optional[ForecastSmoothingParameter] # Evitar circularidad si no es esencial
+    client: DimClient
+    forecast_run: Optional[ForecastSmoothingParameter] # Relación opcional, si se carga
 
     class Config:
         from_attributes = True
@@ -104,12 +104,12 @@ class ForecastVersion(ForecastVersionBase):
 
 # --- Esquemas para Tablas de Hechos ---
 
-class FactHistoryBase(BaseModel): # Actualizado para source en PK
+class FactHistoryBase(BaseModel):
     client_id: uuid.UUID
     sku_id: uuid.UUID
     client_final_id: uuid.UUID
     period: date
-    source: str # Ahora puede ser 'sales' u 'order'
+    source: str
     key_figure_id: int
     value: Optional[float] = None
 
@@ -128,7 +128,7 @@ class FactHistory(FactHistoryBase):
     class Config:
         from_attributes = True
 
-class FactForecastStatBase(BaseModel): # De forecaist_schema.sql
+class FactForecastStatBase(BaseModel):
     client_id: uuid.UUID
     sku_id: uuid.UUID
     client_final_id: uuid.UUID
@@ -150,7 +150,7 @@ class FactForecastStat(FactForecastStatBase):
     class Config:
         from_attributes = True
 
-class FactAdjustmentsBase(BaseModel): # De forecaist_schema.sql
+class FactAdjustmentsBase(BaseModel):
     client_id: uuid.UUID
     sku_id: uuid.UUID
     client_final_id: uuid.UUID
@@ -174,7 +174,7 @@ class FactAdjustments(FactAdjustmentsBase):
     class Config:
         from_attributes = True
 
-class FactForecastVersionedBase(BaseModel): # De forecaist_schema.sql
+class FactForecastVersionedBase(BaseModel):
     version_id: uuid.UUID
     client_id: uuid.UUID
     sku_id: uuid.UUID
@@ -195,7 +195,7 @@ class FactForecastVersioned(FactForecastVersionedBase):
     class Config:
         from_attributes = True
 
-class ManualInputCommentBase(BaseModel): # De forecaist_schema.sql
+class ManualInputCommentBase(BaseModel):
     client_id: uuid.UUID
     sku_id: uuid.UUID
     client_final_id: uuid.UUID

@@ -1,4 +1,4 @@
-# backend/app/routers/sales_forecast.py - Versión corregida
+# backend/app/routers/sales_forecast.py - Versión corregida y completa
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -42,7 +42,6 @@ def read_history_data(
         limit=limit
     )
     if not data:
-        # Se devuelve un 404 si no hay datos, como lo estaba haciendo.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No historical data found matching criteria")
     return data
 
@@ -139,6 +138,70 @@ def delete_history_data(
     return {"message": "Historical data entry deleted successfully"}
 
 
-# --- NO INCLUIMOS ENDPOINTS ESPECÍFICOS PARA FORECAST_VERSIONED O STAT EN ESTE ROUTER ---
-# Si en el futuro necesitas endpoints para estas tablas, los crearemos.
-# Por ahora, nos enfocamos en fact_history como la fuente principal de datos.
+# --- Endpoints para otras tablas de hechos y auxiliares ---
+# Estos simplemente devuelven datos si existen, o una lista vacía si la tabla está vacía.
+# No lanzan 404 si la tabla está vacía, solo si la ruta no existe (que no pasará aquí).
+
+@router.get("/forecast_stat/", response_model=List[schemas.FactForecastStat])
+def read_forecast_stat_data_api(
+    client_ids: List[uuid.UUID] = Query([], description="Filter by client UUIDs"),
+    sku_ids: List[uuid.UUID] = Query([], description="Filter by SKU UUIDs"),
+    start_period: Optional[date] = Query(None, description="Filter data from this period (YYYY-MM-DD)"),
+    end_period: Optional[date] = Query(None, description="Filter data up to this period (YYYY-MM-DD)"),
+    skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
+):
+    data = crud.get_fact_forecast_stat_data(db, client_ids, sku_ids, start_period, end_period, skip, limit)
+    return data # Devuelve lista vacía si no hay datos
+
+@router.get("/adjustments/", response_model=List[schemas.FactAdjustments])
+def read_adjustments_data_api(
+    client_ids: List[uuid.UUID] = Query([], description="Filter by client UUIDs"),
+    sku_ids: List[uuid.UUID] = Query([], description="Filter by SKU UUIDs"),
+    start_period: Optional[date] = Query(None, description="Filter data from this period (YYYY-MM-DD)"),
+    end_period: Optional[date] = Query(None, description="Filter data up to this period (YYYY-MM-DD)"),
+    key_figure_ids: List[int] = Query([], description="Filter by KeyFigure IDs"),
+    adjustment_type_ids: List[int] = Query([], description="Filter by Adjustment Type IDs"),
+    skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
+):
+    data = crud.get_fact_adjustments_data(db, client_ids, sku_ids, start_period, end_period, key_figure_ids, adjustment_type_ids, skip, limit)
+    return data # Devuelve lista vacía si no hay datos
+
+@router.get("/forecast/versioned/", response_model=List[schemas.FactForecastVersioned])
+def read_forecast_versioned_data_api(
+    version_ids: List[uuid.UUID] = Query([], description="Filter by forecast version UUIDs"),
+    client_ids: List[uuid.UUID] = Query([], description="Filter by client UUIDs"),
+    sku_ids: List[uuid.UUID] = Query([], description="Filter by SKU UUIDs"),
+    start_period: Optional[date] = Query(None, description="Filter data from this period (YYYY-MM-DD)"),
+    end_period: Optional[date] = Query(None, description="Filter data up to this period (YYYY-MM-DD)"),
+    key_figure_ids: List[int] = Query([], description="Filter by KeyFigure IDs"),
+    skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
+):
+    data = crud.get_fact_forecast_versioned_data(db, version_ids, client_ids, sku_ids, start_period, end_period, key_figure_ids, skip, limit)
+    return data # Devuelve lista vacía si no hay datos
+
+@router.get("/comments/", response_model=List[schemas.ManualInputComment])
+def read_manual_input_comments_api(
+    client_ids: List[uuid.UUID] = Query([], description="Filter by client UUIDs"),
+    sku_ids: List[uuid.UUID] = Query([], description="Filter by SKU UUIDs"),
+    start_period: Optional[date] = Query(None, description="Filter data from this period (YYYY-MM-DD)"),
+    end_period: Optional[date] = Query(None, description="Filter data up to this period (YYYY-MM-DD)"),
+    key_figure_ids: List[int] = Query([], description="Filter by KeyFigure IDs"),
+    skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
+):
+    data = crud.get_manual_input_comment_data(db, client_ids, sku_ids, start_period, end_period, key_figure_ids, skip, limit)
+    return data # Devuelve lista vacía si no hay datos
+
+@router.get("/versions/", response_model=List[schemas.ForecastVersion])
+def read_forecast_versions_api(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    versions = crud.get_forecast_versions(db, skip=skip, limit=limit)
+    return versions # Devuelve lista vacía si no hay datos
+
+@router.get("/smoothing_parameters/", response_model=List[schemas.ForecastSmoothingParameter])
+def read_forecast_smoothing_parameters_api(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    params = crud.get_forecast_smoothing_parameters(db, skip=skip, limit=limit)
+    return params # Devuelve lista vacía si no hay datos
+
+@router.get("/adjustment_types/", response_model=List[schemas.DimAdjustmentType])
+def read_adjustment_types_api(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    types = crud.get_adjustment_types(db, skip=skip, limit=limit)
+    return types # Devuelve lista vacía si no hay datos

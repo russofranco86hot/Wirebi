@@ -1,12 +1,13 @@
-// frontend/src/components/SalesForecastData.jsx - Versión FINAL y limpia
+// frontend/src/components/SalesForecastData.jsx - Versión FINAL y COMPLETA
 
 import React, { useState, useEffect } from 'react';
-// ¡CAMBIO CLAVE AQUÍ! Eliminamos 'fetchForecastVersionedData' de la importación
-import { fetchClients, fetchSkus, fetchKeyFigures, fetchHistoricalData } from '../api'; 
+// Importamos las funciones necesarias
+import { fetchClients, fetchSkus, fetchKeyFigures, fetchHistoricalData, fetchForecastVersionedData } from '../api'; 
 
 function SalesForecastData() {
   // Estados para los datos y el estado de carga/error
   const [historyData, setHistoryData] = useState([]);
+  const [forecastVersionedData, setForecastVersionedData] = useState([]); // Reactivamos este estado
   const [loadingData, setLoadingData] = useState(false);
   const [errorData, setErrorData] = useState(null);
 
@@ -20,8 +21,8 @@ function SalesForecastData() {
   const [selectedSku, setSelectedSku] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [selectedKeyFigures, setSelectedKeyFigures] = useState([]);
-  const [selectedSources, setSelectedSources] = useState([]); // Nuevo estado para fuentes ('sales', 'order')
+  const [selectedKeyFigures, setSelectedKeyFigures] = useState(null); 
+  const [selectedSources, setSelectedSources] = useState(null); 
 
   // Efecto para cargar las dimensiones (clientes, SKUs, KeyFigures) al inicio
   useEffect(() => {
@@ -37,6 +38,7 @@ function SalesForecastData() {
         setKeyFigures(keyFiguresData);
       } catch (e) {
         console.error("Error loading dimensions:", e);
+        setErrorData("Error al cargar dimensiones para filtros."); // Set error si las dimensiones fallan
       }
     };
     loadDimensions();
@@ -52,14 +54,21 @@ function SalesForecastData() {
         skuIds: selectedSku ? [selectedSku] : null,
         startPeriod: startDate || null,
         endPeriod: endDate || null,
-        keyFigureIds: selectedKeyFigures.length > 0 ? selectedKeyFigures.map(Number) : null,
-        sources: selectedSources.length > 0 ? selectedSources : null,
+        keyFigureIds: selectedKeyFigures, 
+        sources: selectedSources, 
       };
 
-      const historical = await fetchHistoricalData(filterParams);
+      const [historical, versioned] = await Promise.all([
+        fetchHistoricalData(filterParams), // Obtener datos históricos
+        fetchForecastVersionedData(filterParams), // Obtener datos de pronóstico versionado
+      ]);
+
       setHistoryData(historical);
+      setForecastVersionedData(versioned); // Actualizar estado de pronóstico versionado
 
     } catch (e) {
+      // Manejamos el error específico de "No data found matching criteria" en api.js
+      // Aquí, cualquier otro error HTTP o de red se mostrará.
       setErrorData(e.message);
     } finally {
       setLoadingData(false);
@@ -69,22 +78,26 @@ function SalesForecastData() {
   // Función para manejar el cambio en los filtros de KeyFigures
   const handleKeyFigureChange = (event) => {
     const { value, checked } = event.target;
-    setSelectedKeyFigures(prev => 
-      checked ? [...prev, value] : prev.filter(kfId => kfId !== value)
-    );
+    setSelectedKeyFigures(prev => {
+        const currentSelection = prev || []; 
+        const newSelection = checked ? [...currentSelection, value] : currentSelection.filter(kfId => kfId !== value);
+        return newSelection.length > 0 ? newSelection : null; 
+    });
   };
 
   // Función para manejar el cambio en los filtros de Fuentes
   const handleSourceChange = (event) => {
     const { value, checked } = event.target;
-    setSelectedSources(prev => 
-      checked ? [...prev, value] : prev.filter(source => source !== value)
-    );
+    setSelectedSources(prev => {
+        const currentSelection = prev || [];
+        const newSelection = checked ? [...currentSelection, value] : currentSelection.filter(source => source !== value);
+        return newSelection.length > 0 ? newSelection : null;
+    });
   };
 
   return (
     <section>
-      <h2>Datos de Ventas y Órdenes</h2>
+      <h2>Datos de Demanda y Pronóstico</h2>
 
       {/* Controles de Filtro */}
       <div style={{ marginBottom: '20px', border: '1px solid #ccc', padding: '15px' }}>
@@ -126,7 +139,7 @@ function SalesForecastData() {
               <input
                 type="checkbox"
                 value={kf.key_figure_id}
-                checked={selectedKeyFigures.includes(String(kf.key_figure_id))}
+                checked={selectedKeyFigures?.includes(String(kf.key_figure_id)) || false}
                 onChange={handleKeyFigureChange}
               />
               {kf.name}
@@ -134,17 +147,16 @@ function SalesForecastData() {
           ))}
         </div>
         <div style={{ marginTop: '10px' }}>
-          <label>Fuente:</label>
-          {/* Opciones de fuente basadas en tus datos ('sales', 'order') */}
+          <label>Fuente (solo Histórico):</label>
           {['sales', 'order'].map(sourceOption => (
             <label key={sourceOption} style={{ marginLeft: '10px' }}>
               <input
                 type="checkbox"
                 value={sourceOption}
-                checked={selectedSources.includes(sourceOption)}
+                checked={selectedSources?.includes(sourceOption) || false}
                 onChange={handleSourceChange}
               />
-              {sourceOption.charAt(0).toUpperCase() + sourceOption.slice(1)} {/* Capitalizar */}
+              {sourceOption.charAt(0).toUpperCase() + sourceOption.slice(1)}
             </label>
           ))}
         </div>
@@ -153,16 +165,16 @@ function SalesForecastData() {
         </button>
       </div>
 
-      {/* Mostrar Datos Históricos (incluye 'Sales' y 'Order') */}
+      {/* Mostrar Datos */}
       {loadingData ? (
         <p>Cargando datos...</p>
       ) : errorData ? (
         <p style={{ color: 'red' }}>Error al cargar datos: {errorData}</p>
       ) : (
         <>
-          <h3>Datos ({historyData.length} registros)</h3>
+          <h3>Datos Históricos ({historyData.length} registros)</h3>
           {historyData.length === 0 ? (
-            <p>No hay datos para los filtros seleccionados.</p>
+            <p>No hay datos históricos para los filtros seleccionados.</p>
           ) : (
             <table border="1" style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
               <thead>
@@ -177,7 +189,6 @@ function SalesForecastData() {
               </thead>
               <tbody>
                 {historyData.map((item) => (
-                  // Usar una clave compuesta robusta que sea única para cada fila de FactHistory
                   <tr key={`${item.client_id}-${item.sku_id}-${item.period}-${item.key_figure_id}-${item.source}`}>
                     <td>{item.client?.client_name || item.client_id}</td>
                     <td>{item.sku?.sku_name || item.sku_id}</td>
@@ -185,6 +196,36 @@ function SalesForecastData() {
                     <td>{item.key_figure?.name || item.key_figure_id}</td>
                     <td>{item.value}</td>
                     <td>{item.source}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          <h3 style={{ marginTop: '30px' }}>Datos de Pronóstico Versionado ({forecastVersionedData.length} registros)</h3>
+          {forecastVersionedData.length === 0 ? (
+            <p>No hay datos de pronóstico versionado para los filtros seleccionados.</p>
+          ) : (
+            <table border="1" style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
+              <thead>
+                <tr>
+                  <th>Versión ID</th> {/* O el nombre de la versión si lo traes */}
+                  <th>Cliente</th>
+                  <th>SKU</th>
+                  <th>Período</th>
+                  <th>Figura Clave</th>
+                  <th>Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                {forecastVersionedData.map((item) => (
+                  <tr key={`${item.version_id}-${item.client_id}-${item.sku_id}-${item.period}-${item.key_figure_id}`}>
+                    <td>{item.version?.name || item.version_id}</td>
+                    <td>{item.client?.client_name || item.client_id}</td>
+                    <td>{item.sku?.sku_name || item.sku_id}</td>
+                    <td>{item.period}</td>
+                    <td>{item.key_figure?.name || item.key_figure_id}</td>
+                    <td>{item.value}</td>
                   </tr>
                 ))}
               </tbody>

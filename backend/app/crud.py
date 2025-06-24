@@ -1,4 +1,4 @@
-# backend/app/crud.py - Versión corregida para forecaist_schema.sql
+# backend/app/crud.py - Versión corregida y completa para forecaist_schema.sql
 
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
@@ -8,7 +8,7 @@ import uuid
 
 from . import models, schemas
 
-# --- Operaciones CRUD para DimClients, DimSkus, DimKeyFigures (sin cambios) ---
+# --- Operaciones CRUD para DimClients, DimSkus, DimKeyFigures, DimAdjustmentType ---
 
 def get_client_by_name(db: Session, client_name: str):
     return db.query(models.DimClient).filter(models.DimClient.client_name == client_name).first()
@@ -64,9 +64,12 @@ def create_key_figure(db: Session, key_figure: schemas.DimKeyFigureCreate):
     db.refresh(db_key_figure)
     return db_key_figure
 
-# --- Operaciones CRUD para DimAdjustmentTypes (Nuevo/Base) ---
 def get_adjustment_type(db: Session, adjustment_type_id: int):
     return db.query(models.DimAdjustmentType).filter(models.DimAdjustmentType.adjustment_type_id == adjustment_type_id).first()
+
+def get_adjustment_types(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.DimAdjustmentType).offset(skip).limit(limit).all()
+
 
 # --- Operaciones CRUD para FactHistory (Actualizadas para 'source' en PK) ---
 def get_fact_history(
@@ -76,7 +79,7 @@ def get_fact_history(
     client_final_id: uuid.UUID, 
     period: date, 
     key_figure_id: int,
-    source: str # Añadido 'source' a la clave primaria
+    source: str # 'source' es parte de la PK
 ):
     return db.query(models.FactHistory).options(
         joinedload(models.FactHistory.client),
@@ -145,7 +148,7 @@ def update_fact_history(
     client_final_id: uuid.UUID,
     period: date,
     key_figure_id: int,
-    source: str, # Añadido 'source' a los parámetros de identificación
+    source: str, # 'source' a los parámetros de identificación
     fact_history_update: schemas.FactHistoryBase,
     user_id: uuid.UUID
 ):
@@ -166,7 +169,7 @@ def delete_fact_history(
     client_final_id: uuid.UUID, 
     period: date, 
     key_figure_id: int,
-    source: str # Añadido 'source' a los parámetros de identificación
+    source: str # 'source' a los parámetros de identificación
 ):
     db_fact_history = get_fact_history(db, client_id, sku_id, client_final_id, period, key_figure_id, source)
     if db_fact_history:
@@ -176,33 +179,183 @@ def delete_fact_history(
 
 
 # --- Operaciones CRUD para Tablas Auxiliares y Hechos Adicionales (Básicas GET) ---
-# Se incluyen solo para que el modelo SQLAlchemy esté completo y accesible si es necesario,
-# pero no se les da soporte CRUD completo por ahora, a menos que lo pidas.
+# Incluidas para que el modelo SQLAlchemy esté completo y accesible si es necesario,
+# pero solo con funciones GET básicas por ahora.
 
 def get_forecast_smoothing_parameter(db: Session, forecast_run_id: uuid.UUID):
     return db.query(models.ForecastSmoothingParameter).filter(models.ForecastSmoothingParameter.forecast_run_id == forecast_run_id).first()
 
+def get_forecast_smoothing_parameters(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.ForecastSmoothingParameter).offset(skip).limit(limit).all()
+
 def get_forecast_version(db: Session, version_id: uuid.UUID):
     return db.query(models.ForecastVersion).filter(models.ForecastVersion.version_id == version_id).first()
 
-def get_fact_forecast_stat_data(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.FactForecastStat).offset(skip).limit(limit).all()
+def get_forecast_versions(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.ForecastVersion).offset(skip).limit(limit).all()
 
-def get_fact_adjustments_data(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.FactAdjustments).options(
+def get_fact_forecast_stat(
+    db: Session, 
+    client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date
+):
+    return db.query(models.FactForecastStat).filter(
+        models.FactForecastStat.client_id == client_id,
+        models.FactForecastStat.sku_id == sku_id,
+        models.FactForecastStat.client_final_id == client_final_id,
+        models.FactForecastStat.period == period
+    ).first()
+
+def get_fact_forecast_stat_data(
+    db: Session, 
+    client_ids: Optional[List[uuid.UUID]] = None,
+    sku_ids: Optional[List[uuid.UUID]] = None,
+    start_period: Optional[date] = None,
+    end_period: Optional[date] = None,
+    skip: int = 0,
+    limit: int = 100
+) -> List[models.FactForecastStat]:
+    query = db.query(models.FactForecastStat).options(
+        joinedload(models.FactForecastStat.client),
+        joinedload(models.FactForecastStat.sku),
+        joinedload(models.FactForecastStat.forecast_run)
+    )
+    if client_ids:
+        query = query.filter(models.FactForecastStat.client_id.in_(client_ids))
+    if sku_ids:
+        query = query.filter(models.FactForecastStat.sku_id.in_(sku_ids))
+    if start_period:
+        query = query.filter(models.FactForecastStat.period >= start_period)
+    if end_period:
+        query = query.filter(models.FactForecastStat.period <= end_period)
+    return query.offset(skip).limit(limit).all()
+
+def get_fact_adjustments(
+    db: Session, 
+    client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date, 
+    key_figure_id: int, adjustment_type_id: int
+):
+    return db.query(models.FactAdjustments).filter(
+        models.FactAdjustments.client_id == client_id,
+        models.FactAdjustments.sku_id == sku_id,
+        models.FactAdjustments.client_final_id == client_final_id,
+        models.FactAdjustments.period == period,
+        models.FactAdjustments.key_figure_id == key_figure_id,
+        models.FactAdjustments.adjustment_type_id == adjustment_type_id
+    ).first()
+
+def get_fact_adjustments_data(
+    db: Session, 
+    client_ids: Optional[List[uuid.UUID]] = None,
+    sku_ids: Optional[List[uuid.UUID]] = None,
+    start_period: Optional[date] = None,
+    end_period: Optional[date] = None,
+    key_figure_ids: Optional[List[int]] = None,
+    adjustment_type_ids: Optional[List[int]] = None,
+    skip: int = 0,
+    limit: int = 100
+) -> List[models.FactAdjustments]:
+    query = db.query(models.FactAdjustments).options(
         joinedload(models.FactAdjustments.client),
         joinedload(models.FactAdjustments.sku),
         joinedload(models.FactAdjustments.key_figure),
         joinedload(models.FactAdjustments.adjustment_type)
-    ).offset(skip).limit(limit).all()
+    )
+    if client_ids:
+        query = query.filter(models.FactAdjustments.client_id.in_(client_ids))
+    if sku_ids:
+        query = query.filter(models.FactAdjustments.sku_id.in_(sku_ids))
+    if start_period:
+        query = query.filter(models.FactAdjustments.period >= start_period)
+    if end_period:
+        query = query.filter(models.FactAdjustments.period <= end_period)
+    if key_figure_ids:
+        query = query.filter(models.FactAdjustments.key_figure_id.in_(key_figure_ids))
+    if adjustment_type_ids:
+        query = query.filter(models.FactAdjustments.adjustment_type_id.in_(adjustment_type_ids))
+    return query.offset(skip).limit(limit).all()
 
-def get_fact_forecast_versioned_data_full(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.FactForecastVersioned).options(
+def get_fact_forecast_versioned(
+    db: Session, 
+    version_id: uuid.UUID, 
+    client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date, 
+    key_figure_id: int
+):
+    return db.query(models.FactForecastVersioned).filter(
+        models.FactForecastVersioned.version_id == version_id,
+        models.FactForecastVersioned.client_id == client_id,
+        models.FactForecastVersioned.sku_id == sku_id,
+        models.FactForecastVersioned.client_final_id == client_final_id,
+        models.FactForecastVersioned.period == period,
+        models.FactForecastVersioned.key_figure_id == key_figure_id
+    ).first()
+
+def get_fact_forecast_versioned_data(
+    db: Session, 
+    version_ids: Optional[List[uuid.UUID]] = None,
+    client_ids: Optional[List[uuid.UUID]] = None,
+    sku_ids: Optional[List[uuid.UUID]] = None,
+    start_period: Optional[date] = None,
+    end_period: Optional[date] = None,
+    key_figure_ids: Optional[List[int]] = None,
+    skip: int = 0,
+    limit: int = 100
+) -> List[models.FactForecastVersioned]:
+    query = db.query(models.FactForecastVersioned).options(
         joinedload(models.FactForecastVersioned.version),
         joinedload(models.FactForecastVersioned.client),
         joinedload(models.FactForecastVersioned.sku),
         joinedload(models.FactForecastVersioned.key_figure)
-    ).offset(skip).limit(limit).all()
+    )
+    if version_ids:
+        query = query.filter(models.FactForecastVersioned.version_id.in_(version_ids))
+    if client_ids:
+        query = query.filter(models.FactForecastVersioned.client_id.in_(client_ids))
+    if sku_ids:
+        query = query.filter(models.FactForecastVersioned.sku_id.in_(sku_ids))
+    if start_period:
+        query = query.filter(models.FactForecastVersioned.period >= start_period)
+    if end_period:
+        query = query.filter(models.FactForecastVersioned.period <= end_period)
+    if key_figure_ids:
+        query = query.filter(models.FactForecastVersioned.key_figure_id.in_(key_figure_ids))
+    
+    return query.offset(skip).limit(limit).all()
 
-def get_manual_input_comment_data(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.ManualInputComment).offset(skip).limit(limit).all()
+def get_manual_input_comment(
+    db: Session, 
+    client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date, key_figure_id: int
+):
+    return db.query(models.ManualInputComment).filter(
+        models.ManualInputComment.client_id == client_id,
+        models.ManualInputComment.sku_id == sku_id,
+        models.ManualInputComment.client_final_id == client_final_id,
+        models.ManualInputComment.period == period,
+        models.ManualInputComment.key_figure_id == key_figure_id
+    ).first()
+
+def get_manual_input_comment_data(
+    db: Session, 
+    client_ids: Optional[List[uuid.UUID]] = None,
+    sku_ids: Optional[List[uuid.UUID]] = None,
+    start_period: Optional[date] = None,
+    end_period: Optional[date] = None,
+    key_figure_ids: Optional[List[int]] = None,
+    skip: int = 0,
+    limit: int = 100
+) -> List[models.ManualInputComment]:
+    query = db.query(models.ManualInputComment).options(
+        joinedload(models.ManualInputComment.client),
+        joinedload(models.ManualInputComment.sku),
+        joinedload(models.ManualInputComment.key_figure)
+    )
+    if client_ids:
+        query = query.filter(models.ManualInputComment.client_id.in_(client_ids))
+    if sku_ids:
+        query = query.filter(models.ManualInputComment.sku_id.in_(sku_ids))
+    if start_period:
+        query = query.filter(models.ManualInputComment.period >= start_period)
+    if end_period:
+        query = query.filter(models.ManualInputComment.period <= end_period)
+    if key_figure_ids:
+        query = query.filter(models.ManualInputComment.key_figure_id.in_(key_figure_ids))
+    return query.offset(skip).limit(limit).all()

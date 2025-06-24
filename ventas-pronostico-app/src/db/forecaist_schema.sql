@@ -125,6 +125,8 @@ CREATE TABLE IF NOT EXISTS fact_history (
     -- FOREIGN KEY (client_final_id) REFERENCES dim_client_finals(client_final_id) -- If you decide to make it a dim table
 );
 
+ADD CONSTRAINT fact_history_unique UNIQUE (client_id, sku_id, client_final_id, period, key_figure_id, source);
+
 CREATE TABLE IF NOT EXISTS fact_forecast_stat (
     client_id UUID NOT NULL,
     sku_id UUID NOT NULL,

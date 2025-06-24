@@ -1,4 +1,4 @@
-# backend/app/models.py - Versión corregida para forecaist_schema.sql
+# backend/app/models.py - Versión corregida y completa para forecaist_schema.sql
 
 from sqlalchemy import Column, Integer, Text, Boolean, Date, Float, DateTime
 from sqlalchemy.dialects.postgresql import UUID, ENUM
@@ -10,14 +10,17 @@ import uuid
 from .database import Base
 
 # Definir los ENUMs fuera de las clases para reusabilidad
+# Asegúrate de que todos los valores posibles de tus ENUMs estén listados aquí
 source_enum = ENUM('shipments', 'sales', 'order', name='source', create_type=False)
+history_source_enum = ENUM('shipments', 'sales', name='history_source', create_type=False) # Para forecast_versions
+
 
 # --- DIMENSIONAL TABLES ---
 class DimKeyFigure(Base):
     __tablename__ = "dim_keyfigures"
     key_figure_id = Column(Integer, primary_key=True, index=True)
     name = Column(Text, nullable=False, unique=True)
-    applies_to = Column(Text)
+    applies_to = Column(Text) # CHECK (applies_to IN ('history', 'forecast')) en SQL
     editable = Column(Boolean, default=True)
     order = Column(Integer)
 
@@ -35,14 +38,14 @@ class DimSku(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
 
-class DimAdjustmentType(Base): # De forecaist_schema.sql
+class DimAdjustmentType(Base):
     __tablename__ = "dim_adjustment_types"
     adjustment_type_id = Column(Integer, primary_key=True)
     name = Column(Text, nullable=False)
 
 
 # --- AUXILIARY TABLES ---
-class ForecastSmoothingParameter(Base): # De forecaist_schema.sql
+class ForecastSmoothingParameter(Base):
     __tablename__ = "forecast_smoothing_parameters"
     forecast_run_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     client_id = Column(UUID(as_uuid=True), ForeignKey("dim_clients.client_id"), nullable=False)
@@ -52,14 +55,14 @@ class ForecastSmoothingParameter(Base): # De forecaist_schema.sql
 
     client = relationship("DimClient")
 
-class ForecastVersion(Base): # De forecaist_schema.sql
+class ForecastVersion(Base):
     __tablename__ = "forecast_versions"
     version_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     client_id = Column(UUID(as_uuid=True), ForeignKey("dim_clients.client_id"), nullable=False)
     name = Column(Text, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     created_by = Column(UUID(as_uuid=True))
-    history_source = Column(source_enum)
+    history_source = Column(history_source_enum) # Usar el ENUM específico
     model_used = Column(Text)
     forecast_run_id = Column(UUID(as_uuid=True), ForeignKey("forecast_smoothing_parameters.forecast_run_id"))
     notes = Column(Text)
@@ -67,8 +70,9 @@ class ForecastVersion(Base): # De forecaist_schema.sql
     client = relationship("DimClient")
     forecast_run = relationship("ForecastSmoothingParameter")
 
+
 # --- FACT TABLES ---
-class FactHistory(Base): # Actualizado para source en PK y mantenerlo
+class FactHistory(Base):
     __tablename__ = "fact_history"
     client_id = Column(UUID(as_uuid=True), ForeignKey("dim_clients.client_id"), primary_key=True)
     sku_id = Column(UUID(as_uuid=True), ForeignKey("dim_skus.sku_id"), primary_key=True)
@@ -85,7 +89,7 @@ class FactHistory(Base): # Actualizado para source en PK y mantenerlo
     sku = relationship("DimSku")
     key_figure = relationship("DimKeyFigure")
 
-class FactForecastStat(Base): # De forecaist_schema.sql
+class FactForecastStat(Base):
     __tablename__ = "fact_forecast_stat"
     client_id = Column(UUID(as_uuid=True), ForeignKey("dim_clients.client_id"), primary_key=True)
     sku_id = Column(UUID(as_uuid=True), ForeignKey("dim_skus.sku_id"), primary_key=True)
@@ -101,14 +105,14 @@ class FactForecastStat(Base): # De forecaist_schema.sql
     sku = relationship("DimSku")
     forecast_run = relationship("ForecastSmoothingParameter")
 
-class FactAdjustments(Base): # De forecaist_schema.sql
+class FactAdjustments(Base):
     __tablename__ = "fact_adjustments"
     client_id = Column(UUID(as_uuid=True), ForeignKey("dim_clients.client_id"), primary_key=True)
     sku_id = Column(UUID(as_uuid=True), ForeignKey("dim_skus.sku_id"), primary_key=True)
     client_final_id = Column(UUID(as_uuid=True), primary_key=True)
     period = Column(Date, primary_key=True)
     key_figure_id = Column(Integer, ForeignKey("dim_keyfigures.key_figure_id"), primary_key=True)
-    adjustment_type_id = Column(Integer, ForeignKey("dim_adjustment_types.adjustment_type_id"), primary_key=True) # Añadir FK
+    adjustment_type_id = Column(Integer, ForeignKey("dim_adjustment_types.adjustment_type_id"), primary_key=True)
     value = Column(Float)
     comment = Column(Text)
     user_id = Column(UUID(as_uuid=True))
@@ -119,7 +123,7 @@ class FactAdjustments(Base): # De forecaist_schema.sql
     key_figure = relationship("DimKeyFigure")
     adjustment_type = relationship("DimAdjustmentType")
 
-class FactForecastVersioned(Base): # De forecaist_schema.sql
+class FactForecastVersioned(Base):
     __tablename__ = "fact_forecast_versioned"
     version_id = Column(UUID(as_uuid=True), ForeignKey("forecast_versions.version_id"), primary_key=True)
     client_id = Column(UUID(as_uuid=True), ForeignKey("dim_clients.client_id"), primary_key=True)
@@ -134,7 +138,7 @@ class FactForecastVersioned(Base): # De forecaist_schema.sql
     sku = relationship("DimSku")
     key_figure = relationship("DimKeyFigure")
 
-class ManualInputComment(Base): # De forecaist_schema.sql
+class ManualInputComment(Base):
     __tablename__ = "manual_input_comments"
     client_id = Column(UUID(as_uuid=True), ForeignKey("dim_clients.client_id"), primary_key=True)
     sku_id = Column(UUID(as_uuid=True), ForeignKey("dim_skus.sku_id"), primary_key=True)
