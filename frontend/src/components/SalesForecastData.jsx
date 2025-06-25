@@ -1,18 +1,24 @@
-// frontend/src/components/SalesForecastData.jsx - Versión FINAL y COMPLETA (CORRECCIÓN DE HOOKS DEFINITIVA)
+// frontend/src/components/SalesForecastData.jsx - Versión FINAL y COMPLETA (SOLUCIÓN DEFINITIVA DE HOOKS Y AG GRID)
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { fetchClients, fetchSkus, fetchKeyFigures, fetchHistoricalData, fetchForecastVersionedData, generateForecast, fetchForecastStatData } from '../api'; 
+// Importaciones de API
+import { 
+  fetchClients, fetchSkus, fetchKeyFigures, 
+  fetchHistoricalData, fetchForecastVersionedData, fetchForecastStatData, 
+  generateForecast, sendManualAdjustment, fetchAdjustmentTypes 
+} from '../api'; 
 
-// Importaciones de AG Grid (Estas rutas son CORRECTAS para ag-grid-community)
+// Importaciones de AG Grid (estas rutas son CORRECTAS para ag-grid-community)
 import { AgGridReact } from 'ag-grid-react';
-import 'ag-grid-community/styles/ag-grid.css';
+import 'ag-grid-community/styles/ag-grid.css'; 
 import 'ag-grid-community/styles/ag-theme-alpine.css';
+
 import SalesChart from './SalesChart'; 
 
-// --- Componente auxiliar para manejar la carga/error (PARA EVITAR ROMPER HOOKS) ---
-// Este componente simple maneja el renderizado de la tabla cuando los datos están listos.
-// Asegura que SalesForecastData SIEMPRE declare sus hooks.
+// --- Componente auxiliar para manejar la carga/error y renderizar la tabla AG Grid ---
+// Este componente encapsula la lógica condicional para evitar romper las reglas de Hooks
 const DataTableRenderer = React.memo(({ loading, error, rowData, columnDefs, onGridReady, onCellValueChanged, defaultColDef, gridRef }) => {
+  // Manejamos la lógica de carga y error DENTRO de este componente auxiliar
   if (loading) {
     return <p>Cargando datos...</p>;
   }
@@ -21,6 +27,7 @@ const DataTableRenderer = React.memo(({ loading, error, rowData, columnDefs, onG
     return <p style={{ color: 'red' }}>Error al cargar datos: {error}</p>;
   }
 
+  // --- Renderiza AG Grid solo si no hay carga ni error ---
   return (
     <div className="ag-theme-alpine" style={{ height: 600, width: '100%' }}>
       <AgGridReact
@@ -31,7 +38,7 @@ const DataTableRenderer = React.memo(({ loading, error, rowData, columnDefs, onG
         rowSelection={'multiple'}
         onGridReady={onGridReady}
         onCellValueChanged={onCellValueChanged}
-        defaultColDef={defaultColDef}
+        defaultColDef={defaultColDef} 
       />
     </div>
   );
@@ -40,7 +47,7 @@ const DataTableRenderer = React.memo(({ loading, error, rowData, columnDefs, onG
 
 function SalesForecastData() {
   // --- TODAS LAS DECLARACIONES DE ESTADOS Y HOOKS DEBEN IR AQUÍ AL PRINCIPIO ---
-  // ESTOS SIEMPRE SE LLAMARÁN EN CADA RENDERIZADO, SIN EXCEPCIONES.
+  // Estos deben ser lo primero que se declara dentro del componente funcional, sin excepciones.
 
   // ESTADOS
   const [historyData, setHistoryData] = useState([]);
@@ -52,6 +59,7 @@ function SalesForecastData() {
   const [clients, setClients] = useState([]);
   const [skus, setSkus] = useState([]);
   const [keyFigures, setKeyFigures] = useState([]); 
+  const [adjustmentTypes, setAdjustmentTypes] = useState([]); // Nuevo estado para tipos de ajuste
 
   const [selectedClient, setSelectedClient] = useState('');
   const [selectedSku, setSelectedSku] = useState('');
@@ -70,8 +78,8 @@ function SalesForecastData() {
   // REFS
   const gridRef = useRef(); 
 
-  // DEFINICIÓN DE COLUMNAS PARA AG GRID (Es un estado, va al principio)
-  const [columnDefs] = useState([ // columnDefs también es un estado, por lo tanto, arriba
+  // Column Definitions para AG Grid (Es un estado, va al principio)
+  const [columnDefs] = useState([ 
     { headerName: 'Cliente', field: 'clientName', minWidth: 150, filter: true, sortable: true },
     { headerName: 'SKU', field: 'skuName', minWidth: 150, filter: true, sortable: true },
     { headerName: 'Período', field: 'period', minWidth: 120, filter: 'agDateColumnFilter', sortable: true,
@@ -102,9 +110,46 @@ function SalesForecastData() {
     return params.colDef.field === 'value' && params.data.keyFigureName === 'Pronóstico Estadístico';
   }, []);
 
-  const onCellValueChanged = useCallback(event => {
-    console.log('Cell value changed:', event.data);
-  }, []);
+  const onCellValueChanged = useCallback(async event => { 
+    console.log('Cell value changed:', event.data, 'New Value:', event.newValue, 'Old Value:', event.oldValue);
+    
+    if (event.newValue === event.oldValue) {
+        return;
+    }
+
+    const { clientId, skuId, clientFinalId, period, keyFigureId, dataType } = event.data;
+    const newValue = Number(event.newValue);
+
+    const overrideAdjType = adjustmentTypes.find(type => type.name === 'Override');
+    if (!overrideAdjType) {
+        console.error("Tipo de ajuste 'Override' no encontrado. No se puede guardar el ajuste.");
+        alert("Error: Tipo de ajuste 'Override' no configurado en la base de datos.");
+        return;
+    }
+    const adjustmentTypeId = overrideAdjType.adjustment_type_id;
+
+    try {
+        const adjustmentPayload = {
+            client_id: clientId,
+            sku_id: skuId,
+            client_final_id: clientFinalId,
+            period: period, 
+            key_figure_id: keyFigureId,
+            adjustment_type_id: adjustmentTypeId,
+            value: newValue,
+            comment: `Ajuste manual de ${event.oldValue} a ${event.newValue} para ${event.data.keyFigureName}`,
+            user_id: "00000000-0000-0000-0000-000000000001" 
+        };
+        
+        await sendManualAdjustment(adjustmentPayload);
+        console.log("Ajuste guardado exitosamente!");
+        alert("Ajuste guardado exitosamente!");
+    } catch (e) {
+        console.error("Error al guardar el ajuste manual:", e);
+        alert(`Error al guardar el ajuste: ${e.message}`);
+    }
+  }, [adjustmentTypes]); 
+
 
   const onGridReady = useCallback((params) => {
     // params.api.sizeColumnsToFit();
@@ -120,7 +165,6 @@ function SalesForecastData() {
   }, [columnDefs, isCellEditable]); 
 
 
-  // rowData para AG Grid (useMemo depende de historyData y forecastStatData)
   const rowData = useMemo(() => {
     const combined = [];
 
@@ -253,7 +297,11 @@ function SalesForecastData() {
         });
         setForecastGenerationMessage(result.message);
         await handleSearch(); 
-    } catch (e) {
+    }
+    // NOTA: Si el backend lanza un RuntimeError, este catch lo captura.
+    // Asegúrate de que los errores específicos del backend (ej. "tiny datasets")
+    // sean lanzados como RuntimeError y capturados aquí.
+    catch (e) {
         setForecastGenerationError(e.message);
     } finally {
         setGeneratingForecast(false);
@@ -264,14 +312,16 @@ function SalesForecastData() {
   useEffect(() => {
     const loadDimensions = async () => {
       try {
-        const [clientsData, skusData, keyFiguresData] = await Promise.all([
+        const [clientsData, skusData, keyFiguresData, adjustmentTypesData] = await Promise.all([ 
           fetchClients(),
           fetchSkus(),
           fetchKeyFigures(),
+          fetchAdjustmentTypes(), // Nueva llamada a API para tipos de ajuste
         ]);
         setClients(clientsData);
         setSkus(skusData);
         setKeyFigures(keyFiguresData);
+        setAdjustmentTypes(adjustmentTypesData); // Guardar tipos de ajuste
       } catch (e) {
         console.error("Error loading dimensions:", e);
         setErrorData("Error al cargar dimensiones para filtros: " + e.message);
@@ -280,7 +330,8 @@ function SalesForecastData() {
     loadDimensions();
   }, []);
 
-  // --- El renderizado principal del componente (que llama al sub-componente condicional) ---
+  // --- Renderizado Principal del Componente ---
+  // Este bloque `return` SIEMPRE se ejecuta. Las condiciones de carga/error se manejan internamente por DataTableRenderer.
   return (
     <section>
       <h2>Datos de Demanda y Pronóstico</h2>
@@ -400,6 +451,7 @@ function SalesForecastData() {
 
       {/* --- TABLA AG GRID (Ahora renderizada por el componente auxiliar) --- */}
       <h3 style={{ marginTop: '30px' }}>Datos de Detalle (AG Grid)</h3>
+      {/* El bloque if/else para loadingData/errorData para la tabla AG Grid */}
       <DataTableRenderer 
         loading={loadingData} 
         error={errorData} 
@@ -407,7 +459,7 @@ function SalesForecastData() {
         columnDefs={memoizedColumnDefs} 
         onGridReady={onGridReady} 
         onCellValueChanged={onCellValueChanged} 
-        defaultColDef={useMemo(() => ({
+        defaultColDef={useMemo(() => ({ // useMemo para defaultColDef
           flex: 1,
           minWidth: 100,
           resizable: true,

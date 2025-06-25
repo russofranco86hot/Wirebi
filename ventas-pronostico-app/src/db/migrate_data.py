@@ -1,4 +1,4 @@
-# ventas-pronostico-app/src/db/migrate_data.py - Versión Final (Añadir KeyFigure 'Shipments')
+# ventas-pronostico-app/src/db/migrate_data.py - Versión Final (Añadir DimAdjustmentTypes)
 
 import pandas as pd
 import psycopg2
@@ -34,19 +34,12 @@ def get_db_connection():
     return psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD, port=DB_PORT)
 
 def insert_dim_keyfigures(conn):
-    """
-    Inserta las figuras clave si no existen.
-    'Sales' y 'Order' se consideran 'history' para ser cargadas en fact_history.
-    """
     key_figures_data = [
         (1, 'Sales', 'history', True, 1),
-        (2, 'Order', 'history', True, 2), # 'Order' ahora también aplica a 'history'
-        (3, 'Shipments', 'history', True, 3), # Añadir KeyFigure para 'Shipments'
-        # Asegúrate de que estos key_figure_id no colisionen y que se alinee con tu DB.xlsx si tiene 'Shipments'.
-        # Y si tienes otras key figures de forecast que deben existir pero no vienen del excel:
-        (4, 'Statistical Forecast', 'forecast', False, 4), # Usado por forecast_engine
-        # (5, 'Historia Suavizada', 'history', False, 5), # Usado por forecast_engine
-        # Puedes añadir más aquí: (6, 'Final Forecast', 'forecast', True, 6), (7, 'Override', 'forecast', True, 7),
+        (2, 'Order', 'history', True, 2), 
+        (3, 'Shipments', 'history', True, 3), 
+        (4, 'Statistical Forecast', 'forecast', False, 4), 
+        (5, 'Historia Suavizada', 'history', False, 5),
     ]
     try:
         with conn.cursor() as cur:
@@ -62,6 +55,31 @@ def insert_dim_keyfigures(conn):
         print(f"Error al insertar en dim_keyfigures: {e}")
         conn.rollback()
         raise
+
+# --- NUEVA FUNCIÓN: Poblar dim_adjustment_types ---
+def insert_dim_adjustment_types(conn):
+    adjustment_types_data = [
+        (1, 'Manual Qty'),
+        (2, 'Manual Pct'),
+        (3, 'Override'), # Este es el que usaremos para el primer ajuste
+        (4, 'Clean by Pct'),
+        # Añade aquí cualquier otro tipo de ajuste que necesites según tu documento
+    ]
+    try:
+        with conn.cursor() as cur:
+            for adj_id, name in adjustment_types_data:
+                cur.execute("""
+                    INSERT INTO dim_adjustment_types (adjustment_type_id, name)
+                    VALUES (%s, %s)
+                    ON CONFLICT (adjustment_type_id) DO UPDATE SET name = EXCLUDED.name;
+                """, (adj_id, name))
+        conn.commit()
+        print("Tipos de ajuste insertados/verificados en dim_adjustment_types.")
+    except Exception as e:
+        print(f"Error al insertar en dim_adjustment_types: {e}")
+        conn.rollback()
+        raise
+# --- FIN NUEVA FUNCIÓN ---
 
 def get_key_figure_id_by_name(conn, name):
     """Obtiene el ID de una figura clave por su nombre (string)."""
@@ -93,11 +111,11 @@ def migrate_db_xlsx_to_postgres(file_path):
 
         with get_db_connection() as conn:
             insert_dim_keyfigures(conn) 
-
+            insert_dim_adjustment_types(conn) # ¡LLAMADA A LA NUEVA FUNCIÓN!
+            
             sales_kf_id = get_key_figure_id_by_name(conn, 'Sales')
             order_kf_id = get_key_figure_id_by_name(conn, 'Order')
-            # Obtener el KF ID para 'Shipments'
-            shipments_kf_id = get_key_figure_id_by_name(conn, 'Shipments') # Nuevo KF ID
+            shipments_kf_id = get_key_figure_id_by_name(conn, 'Shipments') 
             
             if sales_kf_id is None:
                 print("Error: 'Sales' KeyFigure ID no encontrado en dim_keyfigures. Asegúrate de que exista.")
@@ -108,7 +126,6 @@ def migrate_db_xlsx_to_postgres(file_path):
             if shipments_kf_id is None:
                 print("Error: 'Shipments' KeyFigure ID no encontrado en dim_keyfigures. Asegúrate de que exista.")
                 return
-
 
             history_data_to_insert = []
             
@@ -194,7 +211,7 @@ def migrate_db_xlsx_to_postgres(file_path):
                 elif key_figure_name == 'Order':
                     kf_id_to_use = order_kf_id
                     source_to_use = 'order'
-                elif key_figure_name == 'Shipments': # Manejar 'Shipments' si viene del Excel
+                elif key_figure_name == 'Shipments': 
                     kf_id_to_use = shipments_kf_id
                     source_to_use = 'shipments'
                 else:

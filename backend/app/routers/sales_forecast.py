@@ -1,4 +1,4 @@
-# backend/app/routers/sales_forecast.py - Versión corregida y completa
+# backend/app/routers/sales_forecast.py - Versión FINAL y COMPLETA (con POST /data/adjustments/)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -87,7 +87,7 @@ def update_history_data(
     client_final_id: uuid.UUID,
     period: date,
     key_figure_id: int,
-    source: str, # Añadir source a la ruta para identificar
+    source: str, 
     fact_history_update: schemas.FactHistoryBase,
     db: Session = Depends(get_db)
 ):
@@ -143,7 +143,7 @@ def delete_history_data(
 def generate_forecast_api(
     client_id: uuid.UUID = Query(..., description="Client UUID for which to generate forecast"),
     sku_id: uuid.UUID = Query(..., description="SKU UUID for which to generate forecast"),
-    history_source: str = Query(..., description="Source of historical data ('sales', 'shipments', or 'order')"), # Asegurar 'order'
+    history_source: str = Query(..., description="Source of historical data ('sales', 'shipments', or 'order')"), 
     smoothing_alpha: float = Query(0.5, ge=0.0, le=1.0, description="Alpha parameter for exponential smoothing (0.0 to 1.0)"),
     model_name: str = Query("ETS", description="Statistical model to use for forecast (e.g., 'ETS', 'ARIMA')"),
     forecast_horizon: int = Query(12, ge=1, description="Number of periods to forecast ahead"),
@@ -172,7 +172,7 @@ def generate_forecast_api(
             forecast_horizon=forecast_horizon
         )
         return {"message": "Forecast generation requested successfully", "result": result}
-    except RuntimeError as e: # Captura el RuntimeError del forecast_engine
+    except RuntimeError as e: 
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate forecast: {e}")
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred during forecast generation: {e}")
@@ -184,13 +184,13 @@ def read_forecast_stat_data_api(
     sku_ids: List[uuid.UUID] = Query([], description="Filter by SKU UUIDs"),
     start_period: Optional[date] = Query(None, description="Filter data from this period (YYYY-MM-DD)"),
     end_period: Optional[date] = Query(None, description="Filter data up to this period (YYYY-MM-DD)"),
-    forecast_run_ids: List[uuid.UUID] = Query([], description="Filter by specific forecast run UUIDs"),
+    forecast_run_ids: List[uuid.UUID] = Query([], description="Filter by specific forecast run UUIDs"), 
     skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 ):
     data = crud.get_fact_forecast_stat_data(db, client_ids, sku_ids, start_period, end_period, forecast_run_ids, skip, limit)
     return data
 
-# --- Endpoints para FactAdjustments ---
+# --- Endpoints para FactAdjustments (¡Importante!) ---
 @router.get("/adjustments/", response_model=List[schemas.FactAdjustments])
 def read_adjustments_data_api(
     client_ids: List[uuid.UUID] = Query([], description="Filter by client UUIDs"),
@@ -201,8 +201,35 @@ def read_adjustments_data_api(
     adjustment_type_ids: List[int] = Query([], description="Filter by Adjustment Type IDs"),
     skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 ):
+    """
+    Retrieve manual adjustments data with various filters.
+    """
     data = crud.get_fact_adjustments_data(db, client_ids, sku_ids, start_period, end_period, key_figure_ids, adjustment_type_ids, skip, limit)
     return data
+
+@router.post("/adjustments/", response_model=schemas.FactAdjustments, status_code=status.HTTP_201_CREATED)
+def create_adjustment_api(
+    adjustment: schemas.FactAdjustmentsCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new manual adjustment entry.
+    """
+    user_id_for_adjustment = uuid.UUID('00000000-0000-0000-0000-000000000001') # Placeholder
+
+    client_exists = crud.get_client(db, client_id=adjustment.client_id)
+    sku_exists = crud.get_sku(db, sku_id=adjustment.sku_id)
+    key_figure_exists = crud.get_key_figure(db, key_figure_id=adjustment.key_figure_id)
+    adjustment_type_exists = crud.get_adjustment_type(db, adjustment_type_id=adjustment.adjustment_type_id)
+
+    if not all([client_exists, sku_exists, key_figure_exists, adjustment_type_exists]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="One or more related IDs (Client, SKU, Key Figure, Adjustment Type) not found.")
+
+    try:
+        db_adjustment = crud.create_fact_adjustment(db=db, adjustment=adjustment)
+        return db_adjustment
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create adjustment: {e}")
 
 # --- Endpoints para FactForecastVersioned ---
 @router.get("/forecast/versioned/", response_model=List[schemas.FactForecastVersioned])

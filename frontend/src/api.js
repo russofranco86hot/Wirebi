@@ -1,4 +1,4 @@
-// frontend/src/api.js - Versión FINAL y Corregida para Fase 2
+// frontend/src/api.js - Versión FINAL y COMPLETA
 
 const API_BASE_URL = 'http://localhost:8000'; 
 
@@ -12,6 +12,12 @@ const handleApiResponse = async (response, defaultErrorMessage) => {
         return [];
     }
     if (response.status === 404 && errorBody.detail && errorBody.detail.includes("No forecast stat data found matching criteria")) {
+        return [];
+    }
+    if (response.status === 404 && errorBody.detail && errorBody.detail.includes("No adjustments data found matching criteria")) { // Nuevo
+        return [];
+    }
+    if (response.status === 404 && errorBody.detail && errorBody.detail.includes("No adjustment types found matching criteria")) { // Nuevo
         return [];
     }
     throw new Error(`HTTP error! status: ${response.status} - ${errorBody.detail || defaultErrorMessage || response.statusText}`);
@@ -112,7 +118,6 @@ export const generateForecast = async ({ clientId, skuId, historySource, smoothi
     return handleApiResponse(response, "Error al generar el pronóstico.");
 };
 
-// --- NUEVA FUNCIÓN: Para obtener datos de fact_forecast_stat ---
 export const fetchForecastStatData = async ({ clientIds, skuIds, startPeriod, endPeriod, forecastRunIds }) => {
     const params = {
         client_ids: clientIds,
@@ -128,4 +133,24 @@ export const fetchForecastStatData = async ({ clientIds, skuIds, startPeriod, en
     console.log("Fetching forecast stat data from:", url);
     const response = await fetch(url);
     return handleApiResponse(response, "Error al cargar datos de pronóstico estadístico.");
+};
+
+// --- FUNCIÓN FALTANTE: Para enviar ajustes manuales ---
+export const sendManualAdjustment = async (adjustmentData) => {
+    const url = `${API_BASE_URL}/data/adjustments/`;
+    console.log("Sending adjustment to URL:", url, "with data:", adjustmentData);
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(adjustmentData),
+    });
+    return handleApiResponse(response, "Error al guardar el ajuste manual.");
+};
+
+// --- FUNCIÓN FALTANTE: Para obtener tipos de ajuste ---
+export const fetchAdjustmentTypes = async () => {
+    const response = await fetch(`${API_BASE_URL}/data/adjustment_types/`); // Asumiendo que el router es /data/adjustment_types/
+    return handleApiResponse(response, "Error al cargar tipos de ajuste.");
 };
