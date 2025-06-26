@@ -127,9 +127,12 @@ function SalesChart({ historyData, forecastStatData, cleanHistoryData, finalFore
         title: 'Período',
         type: 'date',
         range: minDate && maxDate ? [minDate.toISOString().split('T')[0], maxDate.toISOString().split('T')[0]] : [],
+        tickformat: "%b %Y", // Formato para mostrar "Ene 2023", "Feb 2023"
+        automargin: true, // Ajuste automático de márgenes para etiquetas largas
       },
       yaxis: {
         title: 'Valor',
+        automargin: true,
       },
       hovermode: 'x unified', // Muestra tooltips para todas las series en la misma fecha
       height: 500,
