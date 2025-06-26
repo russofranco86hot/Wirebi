@@ -36,10 +36,11 @@ def get_db_connection():
 def insert_dim_keyfigures(conn):
     key_figures_data = [
         (1, 'Sales', 'history', True, 1),
-        (2, 'Order', 'history', True, 2), 
-        (3, 'Shipments', 'history', True, 3), 
-        (4, 'Statistical Forecast', 'forecast', False, 4), 
-        (5, 'Historia Suavizada', 'history', False, 5),
+        (2, 'Order', 'history', True, 2),
+        (3, 'Shipments', 'history', True, 3),
+        (4, 'Statistical Forecast', 'forecast', False, 4),
+        (5, 'Historia Limpia', 'history', False, 5), # Nueva figura clave
+        (6, 'Pronóstico Final', 'forecast', True, 6), # Nueva figura clave
     ]
     try:
         with conn.cursor() as cur:
@@ -106,17 +107,17 @@ def migrate_db_xlsx_to_postgres(file_path):
         }, inplace=True)
 
         df.dropna(subset=['key_figure_name', 'period', 'value', 'client_name', 'sku_name'], inplace=True)
-        
+
         df['period'] = pd.to_datetime(df['period']).dt.date
 
         with get_db_connection() as conn:
-            insert_dim_keyfigures(conn) 
+            insert_dim_keyfigures(conn)
             insert_dim_adjustment_types(conn) # ¡LLAMADA A LA NUEVA FUNCIÓN!
-            
+
             sales_kf_id = get_key_figure_id_by_name(conn, 'Sales')
             order_kf_id = get_key_figure_id_by_name(conn, 'Order')
-            shipments_kf_id = get_key_figure_id_by_name(conn, 'Shipments') 
-            
+            shipments_kf_id = get_key_figure_id_by_name(conn, 'Shipments')
+
             if sales_kf_id is None:
                 print("Error: 'Sales' KeyFigure ID no encontrado en dim_keyfigures. Asegúrate de que exista.")
                 return
@@ -128,10 +129,10 @@ def migrate_db_xlsx_to_postgres(file_path):
                 return
 
             history_data_to_insert = []
-            
+
             client_name_to_uuid_map = {}
             sku_name_to_uuid_map = {}
-            
+
             try:
                 with conn.cursor() as cur:
                     unique_client_names = df['client_name'].unique()
@@ -143,7 +144,7 @@ def migrate_db_xlsx_to_postgres(file_path):
                             VALUES (%s, %s)
                             ON CONFLICT (client_id) DO UPDATE SET client_name = EXCLUDED.client_name;
                         """, (c_uuid, c_name.strip()))
-                    
+
                     unique_sku_names = df['sku_name'].unique()
                     for s_name in unique_sku_names:
                         s_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, str(s_name).strip())
@@ -158,16 +159,16 @@ def migrate_db_xlsx_to_postgres(file_path):
 
                     initial_forecast_run_id = uuid.uuid4()
                     initial_version_id = uuid.uuid4()
-                    
+
                     dummy_client_id_for_forecast = next(iter(client_name_to_uuid_map.values()), uuid.UUID('a1b2c3d4-e5f6-7890-1234-567890abcdef'))
-                    
+
                     cur.execute("""
                         INSERT INTO forecast_smoothing_parameters (forecast_run_id, client_id, alpha, user_id)
                         VALUES (%s, %s, %s, %s)
                         ON CONFLICT (forecast_run_id) DO NOTHING;
                     """, (initial_forecast_run_id, dummy_client_id_for_forecast, 0.5, DEFAULT_USER_ID))
                     conn.commit()
-                    
+
                     cur.execute("""
                         INSERT INTO forecast_versions (version_id, client_id, name, created_at, created_by, history_source, model_used, forecast_run_id, notes)
                         VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, %s)
@@ -180,10 +181,10 @@ def migrate_db_xlsx_to_postgres(file_path):
                 conn.rollback()
 
             # --- Lógica para eliminar duplicados antes de la inserción en fact_history ---
-            df_processed = df.copy() 
+            df_processed = df.copy()
 
             history_pk_cols = ['client_name', 'sku_name', 'period', 'key_figure_name']
-            
+
             initial_rows = len(df_processed)
             df_processed = df_processed.drop_duplicates(subset=history_pk_cols, keep='first')
             if len(df_processed) < initial_rows:
@@ -198,7 +199,7 @@ def migrate_db_xlsx_to_postgres(file_path):
 
                 current_client_id = client_name_to_uuid_map.get(client_name)
                 current_sku_id = sku_name_to_uuid_map.get(sku_name)
-                
+
                 client_final_combined_id = f"{client_name}-{sku_name}"
                 current_client_final_id = uuid.uuid5(uuid.NAMESPACE_DNS, client_final_combined_id)
 
@@ -211,7 +212,7 @@ def migrate_db_xlsx_to_postgres(file_path):
                 elif key_figure_name == 'Order':
                     kf_id_to_use = order_kf_id
                     source_to_use = 'order'
-                elif key_figure_name == 'Shipments': 
+                elif key_figure_name == 'Shipments':
                     kf_id_to_use = shipments_kf_id
                     source_to_use = 'shipments'
                 else:
@@ -245,7 +246,7 @@ def migrate_db_xlsx_to_postgres(file_path):
                     print(f"Se insertaron/actualizaron {len(history_data_to_insert)} filas en fact_history.")
                 else:
                     print("No hay datos de historial para insertar.")
-            
+
             conn.commit()
             print("Migración de datos desde DB.xlsx a PostgreSQL completada.")
 

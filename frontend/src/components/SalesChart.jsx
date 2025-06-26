@@ -1,148 +1,167 @@
-// frontend/src/components/SalesChart.jsx - Versión FINAL con Historia Suavizada y Forecast Stat
+// frontend/src/components/SalesChart.jsx
 
-import React from 'react';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
-} from 'recharts';
+import React, { useMemo } from 'react';
+import Plot from 'react-plotly.js';
 
-function SalesChart({ historyData, forecastStatData, keyFigures, selectedKeyFigures, selectedSources }) {
-  // Aseguramos que data sea un array y no null/undefined
-  if (!historyData && !forecastStatData || (historyData.length === 0 && forecastStatData.length === 0)) {
-    return <p>No hay datos disponibles para el gráfico con los filtros seleccionados.</p>;
-  }
+function SalesChart({ historyData, forecastStatData, cleanHistoryData, finalForecastData, keyFigures, selectedKeyFigures, selectedSources }) {
+  // Mapeo de keyFigures por ID para fácil acceso al nombre
+  const keyFigureNameMap = useMemo(() => {
+    return keyFigures.reduce((map, kf) => {
+      map[kf.key_figure_id] = kf.name;
+      return map;
+    }, {});
+  }, [keyFigures]);
 
-  // --- Procesamiento de Datos para el Gráfico ---
-  const combinedDataMap = new Map();
+  const chartData = useMemo(() => {
+    const data = [];
+    let allDates = new Set(); // Para encontrar el rango de fechas dinámicamente
 
-  // Procesar datos históricos (crudos y suavizados)
-  if (historyData && historyData.length > 0) {
-    historyData.forEach(item => {
-      const period = item.period; 
-      const keyFigureName = item.key_figure?.name; // "Sales", "Order", "Historia Suavizada"
-      const sourceName = item.source; // "sales", "order", "shipments"
-      const value = item.value;
+    // 1. Historia Cruda (Sales, Order, Shipments)
+    if (historyData && historyData.length > 0) {
+      const groupedHistory = historyData.reduce((acc, item) => {
+        const key = `${item.client_id}-${item.sku_id}-${item.key_figure_id}-${item.source}`;
+        if (!acc[key]) {
+          acc[key] = {
+            x: [],
+            y: [],
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: `${item.client?.client_name || 'N/A'} - ${item.sku?.sku_name || 'N/A'} - ${keyFigureNameMap[item.key_figure_id] || item.key_figure?.name || 'Historia'} (${item.source})`,
+            visible: (selectedKeyFigures === null || selectedKeyFigures.includes(String(item.key_figure_id))) &&
+                     (selectedSources === null || selectedSources.includes(item.source)) ? true : 'legendonly'
+          };
+        }
+        acc[key].x.push(item.period);
+        acc[key].y.push(item.value);
+        allDates.add(new Date(item.period));
+        return acc;
+      }, {});
+      data.push(...Object.values(groupedHistory));
+    }
 
-      if (!period || value === undefined || value === null) return;
+    // 2. Pronóstico Estadístico
+    if (forecastStatData && forecastStatData.length > 0) {
+        const groupedForecastStat = forecastStatData.reduce((acc, item) => {
+            const key = `${item.client_id}-${item.sku_id}-stat-forecast`;
+            if (!acc[key]) {
+                acc[key] = {
+                    x: [],
+                    y: [],
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: `${item.client?.client_name || 'N/A'} - ${item.sku?.sku_name || 'N/A'} - Pronóstico Estadístico (${item.model_used})`,
+                    line: { dash: 'dot', color: 'blue' }, // Línea punteada para pronóstico
+                    marker: { symbol: 'circle-open' },
+                    visible: (selectedKeyFigures === null || selectedKeyFigures.includes(String(4))) ? true : 'legendonly' // 4 es el ID de Pronóstico Estadístico
+                };
+            }
+            acc[key].x.push(item.period);
+            acc[key].y.push(item.value);
+            allDates.add(new Date(item.period));
+            return acc;
+        }, {});
+        data.push(...Object.values(groupedForecastStat));
+    }
 
-      if (!combinedDataMap.has(period)) {
-        combinedDataMap.set(period, { period: period });
-      }
-      const currentPeriodData = combinedDataMap.get(period);
+    // 3. Historia Limpia (Nueva)
+    if (cleanHistoryData && cleanHistoryData.length > 0) {
+        const groupedCleanHistory = cleanHistoryData.reduce((acc, item) => {
+            const key = `${item.client_id}-${item.sku_id}-clean-history`;
+            if (!acc[key]) {
+                acc[key] = {
+                    x: [],
+                    y: [],
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: `${item.clientName || 'N/A'} - ${item.skuName || 'N/A'} - Historia Limpia`,
+                    line: { color: 'green' }, // Color distintivo para historia limpia
+                    visible: (selectedKeyFigures === null || selectedKeyFigures.includes(String(5))) ? true : 'legendonly' // 5 es el ID de Historia Limpia
+                };
+            }
+            acc[key].x.push(item.period);
+            acc[key].y.push(item.value);
+            allDates.add(new Date(item.period));
+            return acc;
+        }, {});
+        data.push(...Object.values(groupedCleanHistory));
+    }
 
-      // Crear una clave única para la línea basada en KeyFigure y Source para Historia
-      // Ej. "Sales_sales", "Order_order", "Historia Suavizada_sales"
-      const dataKey = `${keyFigureName}_${sourceName}`; 
-      currentPeriodData[dataKey] = value;
-    });
-  }
+    // 4. Pronóstico Final (Nueva)
+    if (finalForecastData && finalForecastData.length > 0) {
+        const groupedFinalForecast = finalForecastData.reduce((acc, item) => {
+            const key = `${item.client_id}-${item.sku_id}-final-forecast`;
+            if (!acc[key]) {
+                acc[key] = {
+                    x: [],
+                    y: [],
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: `${item.clientName || 'N/A'} - ${item.skuName || 'N/A'} - Pronóstico Final`,
+                    line: { dash: 'dashdot', color: 'red' }, // Línea dash-dot para pronóstico final
+                    marker: { symbol: 'star' },
+                    visible: (selectedKeyFigures === null || selectedKeyFigures.includes(String(6))) ? true : 'legendonly' // 6 es el ID de Pronóstico Final
+                };
+            }
+            acc[key].x.push(item.period);
+            acc[key].y.push(item.value);
+            allDates.add(new Date(item.period));
+            return acc;
+        }, {});
+        data.push(...Object.values(groupedFinalForecast));
+    }
 
-  // Procesar datos de pronóstico estadístico
-  if (forecastStatData && forecastStatData.length > 0) {
-    forecastStatData.forEach(item => {
-      const period = item.period;
-      const modelUsed = item.model_used; 
-      const value = item.value;
+    // Determinar el rango de fechas para el layout
+    let minDate = allDates.size > 0 ? new Date(Math.min(...Array.from(allDates))) : null;
+    let maxDate = allDates.size > 0 ? new Date(Math.max(...Array.from(allDates))) : null;
 
-      if (!period || value === undefined || value === null) return;
+    // Ajustar el rango del eje X para que sea un poco más amplio
+    if (minDate && maxDate) {
+      minDate.setMonth(minDate.getMonth() - 1); // Un mes antes
+      maxDate.setMonth(maxDate.getMonth() + 1); // Un mes después
+    }
 
-      if (!combinedDataMap.has(period)) {
-        combinedDataMap.set(period, { period: period });
-      }
-      const currentPeriodData = combinedDataMap.get(period);
 
-      // Clave única para la línea de pronóstico estadístico
-      const dataKey = "Pronóstico Estadístico"; // Nombre constante para la línea
-      currentPeriodData[dataKey] = value;
-    });
-  }
+    const layout = {
+      title: 'Demanda y Pronóstico',
+      xaxis: {
+        title: 'Período',
+        type: 'date',
+        range: minDate && maxDate ? [minDate.toISOString().split('T')[0], maxDate.toISOString().split('T')[0]] : [],
+      },
+      yaxis: {
+        title: 'Valor',
+      },
+      hovermode: 'x unified', // Muestra tooltips para todas las series en la misma fecha
+      height: 500,
+      responsive: true,
+      margin: {
+        l: 50,
+        r: 50,
+        b: 100,
+        t: 100,
+        pad: 4
+      },
+    };
 
-  const chartData = Array.from(combinedDataMap.values()).sort((a, b) => new Date(a.period) - new Date(b.period));
+    return { data, layout };
 
-  if (!chartData || chartData.length === 0) {
-    return <p>No hay datos disponibles para el gráfico con los filtros seleccionados.</p>;
-  }
-
-  // --- Definición de las Líneas del Gráfico ---
-  const linesToRender = [];
-  const colors = [
-    '#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#0088fe', '#00c49f', '#ffbb28',
-    '#a4de6c', '#d0ed57', '#83a6ed', '#8dd1e1', '#c09893', '#b3d9d4'
-  ]; 
-  let colorIndex = 0;
-
-  const activeKeyFiguresIds = selectedKeyFigures || [];
-
-  // 1. Líneas para Historia Cruda y Historia Suavizada
-  keyFigures.forEach(kf => {
-      // Filtrar por las KeyFigures seleccionadas en la UI
-      if (activeKeyFiguresIds.length > 0 && !activeKeyFiguresIds.includes(String(kf.key_figure_id))) {
-          return; 
-      }
-
-      const appliesTo = kf.applies_to;
-      
-      if (appliesTo === 'history') {
-          const activeSources = selectedSources || ['sales', 'order', 'shipments']; // Default a todas si no hay filtro
-
-          activeSources.forEach(source => {
-              const dataKey = `${kf.name}_${source}`; 
-              const displayName = `${kf.name} (${source.charAt(0).toUpperCase() + source.slice(1)})`;
-              
-              if (chartData.some(d => d[dataKey] !== undefined && d[dataKey] !== null)) {
-                linesToRender.push(
-                    <Line 
-                        key={dataKey} 
-                        type="monotone" 
-                        dataKey={dataKey} 
-                        stroke={colors[colorIndex % colors.length]} 
-                        activeDot={{ r: 8 }} 
-                        name={displayName} 
-                        strokeWidth={2}
-                    />
-                );
-                colorIndex++;
-              }
-          });
-      }
-  });
-
-  // 2. Línea para "Pronóstico Estadístico"
-  if (chartData.some(d => d["Pronóstico Estadístico"] !== undefined && d["Pronóstico Estadístico"] !== null)) {
-      linesToRender.push(
-          <Line 
-              key="Statistical Forecast" 
-              type="monotone" 
-              dataKey="Pronóstico Estadístico" 
-              stroke={colors[colorIndex % colors.length]} 
-              activeDot={{ r: 8 }} 
-              name="Pronóstico Estadístico" 
-              strokeWidth={3} 
-              strokeDasharray="5 5" 
-          />
-      );
-      colorIndex++;
-  }
+  }, [historyData, forecastStatData, cleanHistoryData, finalForecastData, keyFigureNameMap, selectedKeyFigures, selectedSources]);
 
 
   return (
-    <section style={{ marginTop: '30px' }}>
-      <h3>Gráfico de Datos</h3>
-      <ResponsiveContainer width="100%" height={400}>
-        <LineChart
-          data={chartData}
-          margin={{
-            top: 5, right: 30, left: 20, bottom: 5,
-          }}
-        >
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="period" />
-          <YAxis />
-          <Tooltip />
-          <Legend />
-          {linesToRender}
-        </LineChart>
-      </ResponsiveContainer>
-    </section>
+    <div style={{ marginTop: '30px', border: '1px solid #ccc', padding: '15px' }}>
+      <h3>Visualización de Datos</h3>
+      {chartData.data.length > 0 ? (
+        <Plot
+          data={chartData.data}
+          layout={chartData.layout}
+          style={{ width: '100%', height: '100%' }}
+          useResizeHandler={true} // Hace que el gráfico se adapte al tamaño del contenedor
+        />
+      ) : (
+        <p>No hay datos seleccionados para mostrar en el gráfico. Por favor, realiza una búsqueda.</p>
+      )}
+    </div>
   );
 }
 

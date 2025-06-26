@@ -1,156 +1,189 @@
-// frontend/src/api.js - Versión FINAL y COMPLETA
+// frontend/src/api.js - Versión actualizada con endpoints de Historia Limpia, Pronóstico Final y Comentarios
+//                       INCLUYE MEJORA TEMPORAL DE MANEJO DE ERRORES PARA DEBUGGING 422
 
-const API_BASE_URL = 'http://localhost:8000'; 
+const API_BASE_URL = 'http://localhost:8000'; // Ajusta esto si tu backend se ejecuta en otra URL
 
-const handleApiResponse = async (response, defaultErrorMessage) => {
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({})); 
-    if (response.status === 404 && errorBody.detail && errorBody.detail.includes("No historical data found matching criteria")) {
-      return [];
-    }
-    if (response.status === 404 && errorBody.detail && errorBody.detail.includes("No versioned forecast data found matching criteria")) {
-        return [];
-    }
-    if (response.status === 404 && errorBody.detail && errorBody.detail.includes("No forecast stat data found matching criteria")) {
-        return [];
-    }
-    if (response.status === 404 && errorBody.detail && errorBody.detail.includes("No adjustments data found matching criteria")) { // Nuevo
-        return [];
-    }
-    if (response.status === 404 && errorBody.detail && errorBody.detail.includes("No adjustment types found matching criteria")) { // Nuevo
-        return [];
-    }
-    throw new Error(`HTTP error! status: ${response.status} - ${errorBody.detail || defaultErrorMessage || response.statusText}`);
-  }
-  return response.json();
-};
-
-const buildQueryParams = (paramsObj) => {
-  const params = new URLSearchParams();
-  for (const key in paramsObj) {
-    const value = paramsObj[key];
-
-    if (value !== null && value !== undefined && value !== '') {
-      if (Array.isArray(value)) {
-        if (value.length > 0) {
-          value.forEach(item => params.append(key, String(item)));
+async function handleApiResponse(response) {
+    if (!response.ok) {
+        // Intenta parsear la respuesta JSON del error.
+        // Si no es JSON o hay otro problema, lo maneja.
+        let errorData;
+        try {
+            errorData = await response.json();
+        } catch (e) {
+            errorData = { detail: `No JSON response or parsing error, status: ${response.status}. Text: ${await response.text()}` };
         }
-      } else {
-        params.append(key, String(value));
-      }
+        
+        console.error("API Error Response (raw):", errorData); // <-- MUY IMPORTANTE: REGISTRA LA RESPUESTA COMPLETA DEL ERROR
+
+        let errorMessage = `HTTP error! status: ${response.status}`;
+
+        if (errorData.detail) {
+            if (Array.isArray(errorData.detail)) {
+                // Si 'detail' es un array (típico de errores 422 de FastAPI)
+                errorMessage = "Errores de validación:\n" + errorData.detail.map(err => {
+                    const loc = err.loc ? err.loc.join('.') : 'unknown';
+                    return `Campo: ${loc}, Mensaje: ${err.msg} (Tipo: ${err.type})`;
+                }).join('\n');
+            } else {
+                // Si 'detail' es un string
+                errorMessage = errorData.detail;
+            }
+        } else if (response.statusText) {
+            errorMessage = response.statusText;
+        }
+
+        throw new Error(errorMessage);
     }
-  }
-  const queryString = params.toString();
-  return queryString ? `?${queryString}` : '';
-};
+    return response.json();
+}
 
-export const fetchClients = async () => {
-  const response = await fetch(`${API_BASE_URL}/clients/`);
-  return handleApiResponse(response, "Error al cargar clientes.");
-};
+// --- Clientes ---
+export async function fetchClients() {
+    const response = await fetch(`${API_BASE_URL}/clients/`);
+    return handleApiResponse(response);
+}
 
-export const fetchSkus = async () => {
-  const response = await fetch(`${API_BASE_URL}/skus/`);
-  return handleApiResponse(response, "Error al cargar SKUs.");
-};
+// --- SKUs ---
+export async function fetchSkus() {
+    const response = await fetch(`${API_BASE_URL}/skus/`);
+    return handleApiResponse(response);
+}
 
-export const fetchKeyFigures = async () => {
-  const response = await fetch(`${API_BASE_URL}/keyfigures/`);
-  return handleApiResponse(response, "Error al cargar Figuras Clave.");
-};
+// --- Key Figures ---
+export async function fetchKeyFigures() {
+    const response = await fetch(`${API_BASE_URL}/keyfigures/`);
+    return handleApiResponse(response);
+}
 
-export const fetchHistoricalData = async ({ clientIds, skuIds, startPeriod, endPeriod, keyFigureIds, sources }) => {
-  const params = {
-    client_ids: clientIds,
-    sku_ids: skuIds,
-    start_period: startPeriod,
-    end_period: endPeriod,
-    key_figure_ids: keyFigureIds,
-    sources: sources,
-  };
+// --- Adjustment Types ---
+export async function fetchAdjustmentTypes() {
+    const response = await fetch(`${API_BASE_URL}/data/adjustment_types/`);
+    return handleApiResponse(response);
+}
 
-  const queryString = buildQueryParams(params);
-  const url = `${API_BASE_URL}/data/history/${queryString}`;
-  
-  console.log("Fetching historical data from:", url); 
-  const response = await fetch(url);
-  return handleApiResponse(response, "Error al cargar datos históricos.");
-};
+// --- Fact History Data ---
+export async function fetchHistoricalData(filterParams = {}) {
+    const params = new URLSearchParams();
+    if (filterParams.clientIds) filterParams.clientIds.forEach(id => params.append('client_ids', id));
+    if (filterParams.skuIds) filterParams.skuIds.forEach(id => params.append('sku_ids', id));
+    if (filterParams.startPeriod) params.append('start_period', filterParams.startPeriod);
+    if (filterParams.endPeriod) params.append('end_period', filterParams.endPeriod);
+    if (filterParams.keyFigureIds) filterParams.keyFigureIds.forEach(id => params.append('key_figure_ids', id));
+    if (filterParams.sources) filterParams.sources.forEach(source => params.append('sources', source));
 
-export const fetchForecastVersionedData = async ({ versionIds, clientIds, skuIds, startPeriod, endPeriod, keyFigureIds }) => {
-    const params = {
-        version_ids: versionIds,
-        client_ids: clientIds,
-        sku_ids: skuIds,
-        start_period: startPeriod,
-        end_period: endPeriod,
-        key_figure_ids: keyFigureIds,
-    };
+    const response = await fetch(`${API_BASE_URL}/data/history/?${params.toString()}`);
+    return handleApiResponse(response);
+}
 
-    const queryString = buildQueryParams(params);
-    const url = `${API_BASE_URL}/data/forecast/versioned/${queryString}`;
+// --- Fact Forecast Versioned Data (Si aplica) ---
+export async function fetchForecastVersionedData(filterParams = {}) {
+    const params = new URLSearchParams();
+    if (filterParams.versionIds) filterParams.versionIds.forEach(id => params.append('version_ids', id));
+    if (filterParams.clientIds) filterParams.clientIds.forEach(id => params.append('client_ids', id));
+    if (filterParams.skuIds) filterParams.skuIds.forEach(id => params.append('sku_ids', id));
+    if (filterParams.startPeriod) params.append('start_period', filterParams.startPeriod);
+    if (filterParams.endPeriod) params.append('end_period', filterParams.endPeriod);
+    if (filterParams.keyFigureIds) filterParams.keyFigureIds.forEach(id => params.append('key_figure_ids', id));
 
-    console.log("Fetching forecast versioned data from:", url); 
-    const response = await fetch(url);
-    return handleApiResponse(response, "Error al cargar datos de pronóstico versionado.");
-};
+    const response = await fetch(`${API_BASE_URL}/data/forecast/versioned/?${params.toString()}`);
+    return handleApiResponse(response);
+}
 
-export const generateForecast = async ({ clientId, skuId, historySource, smoothingAlpha, modelName, forecastHorizon }) => {
-    const params = {
-        client_id: clientId,
-        sku_id: skuId,
-        history_source: historySource,
-        smoothing_alpha: smoothingAlpha,
-        model_name: modelName,
-        forecast_horizon: forecastHorizon,
-    };
+// --- Fact Forecast Stat Data ---
+export async function fetchForecastStatData(filterParams = {}) {
+    const params = new URLSearchParams();
+    if (filterParams.clientIds) filterParams.clientIds.forEach(id => params.append('client_ids', id));
+    if (filterParams.skuIds) filterParams.skuIds.forEach(id => params.append('sku_ids', id));
+    if (filterParams.startPeriod) params.append('start_period', filterParams.startPeriod);
+    if (filterParams.endPeriod) params.append('end_period', filterParams.endPeriod);
+    if (filterParams.forecastRunIds) filterParams.forecastRunIds.forEach(id => params.append('forecast_run_ids', id));
 
-    const queryString = buildQueryParams(params);
-    const url = `${API_BASE_URL}/data/forecast/generate/${queryString}`;
+    const response = await fetch(`${API_BASE_URL}/data/forecast_stat/?${params.toString()}`);
+    return handleApiResponse(response);
+}
 
-    console.log("Generating forecast with URL:", url);
-    const response = await fetch(url, {
+// --- Generate Forecast ---
+export async function generateForecast(forecastParams) {
+    const params = new URLSearchParams();
+    for (const key in forecastParams) {
+        if (forecastParams[key] !== null && forecastParams[key] !== undefined) {
+            params.append(key, forecastParams[key]);
+        }
+    }
+    const response = await fetch(`${API_BASE_URL}/data/forecast/generate/?${params.toString()}`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
+        // No body needed for POST with query parameters
     });
-    return handleApiResponse(response, "Error al generar el pronóstico.");
-};
+    return handleApiResponse(response);
+}
 
-export const fetchForecastStatData = async ({ clientIds, skuIds, startPeriod, endPeriod, forecastRunIds }) => {
-    const params = {
-        client_ids: clientIds,
-        sku_ids: skuIds,
-        start_period: startPeriod,
-        end_period: endPeriod,
-        forecast_run_ids: forecastRunIds,
-    };
+// --- Send Manual Adjustment (UPSERT) ---
+export async function sendManualAdjustment(adjustmentPayload) {
+    console.log("Sending adjustment to URL: ", `${API_BASE_URL}/data/adjustments/`, "with data:", adjustmentPayload);
+    const response = await fetch(`${API_BASE_URL}/data/adjustments/`, {
+        method: 'POST', // Usamos POST para el upsert
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(adjustmentPayload),
+    });
+    return handleApiResponse(response);
+}
 
-    const queryString = buildQueryParams(params);
-    const url = `${API_BASE_URL}/data/forecast_stat/${queryString}`;
+// --- NUEVAS FUNCIONES PARA HISTORIA LIMPIA Y PRONÓSTICO FINAL ---
+export async function fetchCleanHistoryData(filterParams = {}) {
+    const params = new URLSearchParams();
+    // client_id, sku_id, client_final_id, start_period, end_period son requeridos por el endpoint
+    if (filterParams.clientId) params.append('client_id', filterParams.clientId);
+    if (filterParams.skuId) params.append('sku_id', filterParams.skuId);
+    if (filterParams.clientFinalId) params.append('client_final_id', filterParams.clientFinalId);
+    if (filterParams.startPeriod) params.append('start_period', filterParams.startPeriod);
+    if (filterParams.endPeriod) params.append('end_period', filterParams.endPeriod);
+    if (filterParams.historySource) params.append('history_source', filterParams.historySource);
 
-    console.log("Fetching forecast stat data from:", url);
-    const response = await fetch(url);
-    return handleApiResponse(response, "Error al cargar datos de pronóstico estadístico.");
-};
+    const response = await fetch(`${API_BASE_URL}/data/clean_history/?${params.toString()}`);
+    return handleApiResponse(response);
+}
 
-// --- FUNCIÓN FALTANTE: Para enviar ajustes manuales ---
-export const sendManualAdjustment = async (adjustmentData) => {
-    const url = `${API_BASE_URL}/data/adjustments/`;
-    console.log("Sending adjustment to URL:", url, "with data:", adjustmentData);
-    const response = await fetch(url, {
+export async function fetchFinalForecastData(filterParams = {}) {
+    const params = new URLSearchParams();
+    // client_id, sku_id, client_final_id, start_period, end_period son requeridos por el endpoint
+    if (filterParams.clientId) params.append('client_id', filterParams.clientId);
+    if (filterParams.skuId) params.append('sku_id', filterParams.skuId);
+    if (filterParams.clientFinalId) params.append('client_final_id', filterParams.clientFinalId);
+    if (filterParams.startPeriod) params.append('start_period', filterParams.startPeriod);
+    if (filterParams.endPeriod) params.append('end_period', filterParams.endPeriod);
+    
+    const response = await fetch(`${API_BASE_URL}/data/final_forecast/?${params.toString()}`);
+    return handleApiResponse(response);
+}
+
+
+// --- NUEVAS FUNCIONES PARA COMENTARIOS ---
+export async function sendComment(commentPayload) {
+    console.log("Sending comment to URL: ", `${API_BASE_URL}/data/comments/`, "with data:", commentPayload);
+    const response = await fetch(`${API_BASE_URL}/data/comments/`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify(adjustmentData),
+        body: JSON.stringify(commentPayload),
     });
-    return handleApiResponse(response, "Error al guardar el ajuste manual.");
-};
+    return handleApiResponse(response);
+}
 
-// --- FUNCIÓN FALTANTE: Para obtener tipos de ajuste ---
-export const fetchAdjustmentTypes = async () => {
-    const response = await fetch(`${API_BASE_URL}/data/adjustment_types/`); // Asumiendo que el router es /data/adjustment_types/
-    return handleApiResponse(response, "Error al cargar tipos de ajuste.");
-};
+export async function fetchComments(filterParams = {}) {
+    const params = new URLSearchParams();
+    if (filterParams.clientIds) filterParams.clientIds.forEach(id => params.append('client_ids', id));
+    if (filterParams.skuIds) filterParams.skuIds.forEach(id => params.append('sku_ids', id));
+    if (filterParams.startPeriod) params.append('start_period', filterParams.startPeriod);
+    if (filterParams.endPeriod) params.append('end_period', filterParams.endPeriod);
+    if (filterParams.keyFigureIds) filterParams.keyFigureIds.forEach(id => params.append('key_figure_ids', id));
+
+    const response = await fetch(`${API_BASE_URL}/data/comments/?${params.toString()}`);
+    return handleApiResponse(response);
+}

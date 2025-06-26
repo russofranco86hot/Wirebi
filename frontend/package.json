@@ -13,14 +13,15 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "recharts": "^2.12.7",
-    
     "ag-grid-community": "^31.0.3",
-    "ag-grid-react": "^31.0.3"     
+    "ag-grid-react": "^31.0.3",
+    "react-plotly.js": "^2.6.0",   
+    "plotly.js": "^2.30.0"         
   },
   "devDependencies": {
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
-    "@vitejs/plugin-react-swc": "latest", 
+    "@vitejs/plugin-react-swc": "latest",
     "eslint": "^8.57.0",
     "eslint-plugin-react": "^7.34.1",
     "eslint-plugin-react-hooks": "^4.6.0",

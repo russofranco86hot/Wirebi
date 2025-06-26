@@ -1,44 +1,30 @@
-# backend/app/main.py (Tu versión actual)
+# Wirebi/backend/app/main.py
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware # Importar CORSMiddleware
 
-from fastapi import FastAPI, Depends, HTTPException
-from fastapi.middleware.cors import CORSMiddleware # Importa el middleware CORS
-from sqlalchemy.orm import Session
-
-from . import models
-from .database import engine, get_db
-from .routers import clients, skus, keyfigures, sales_forecast 
-
-# Crea las tablas en la base de datos (solo si no existen)
-models.Base.metadata.create_all(bind=engine)
+from .routers import clients, skus, keyfigures, sales_forecast
 
 app = FastAPI(
-    title="Wirebi Forecast API",
-    description="API para gestionar datos de ventas históricas y pronósticos versionados.",
+    title="Wirebi Forecasting API",
+    description="API para gestionar datos de ventas, pronósticos y ajustes.",
     version="0.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
 )
 
-# --- CONFIGURACIÓN CORS ---
+# Configuración de CORS
 origins = [
     "http://localhost",
-    "http://localhost:5173",
-    "http://127.0.0.1",       
-    "http://127.0.0.1:5173",  
-    # Otros orígenes si tu frontend se desplegara en un dominio diferente
+    "http://localhost:5173",  # Agrega el origen de tu frontend (Vite por defecto)
+    # Puedes añadir otros orígenes aquí si tu frontend se aloja en otro lugar
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Permite todos los métodos (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"],  # Permite todos los encabezados
 )
-# --- FIN CONFIGURACIÓN CORS ---
 
-
-# Incluye los routers en la aplicación principal de FastAPI
 app.include_router(clients.router)
 app.include_router(skus.router)
 app.include_router(keyfigures.router)
@@ -46,6 +32,4 @@ app.include_router(sales_forecast.router)
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to the Wirebi Forecast API!"}
-
-# Puedes agregar más endpoints aquí, como autenticación, etc.
+    return {"message": "Welcome to Wirebi Forecasting API"}

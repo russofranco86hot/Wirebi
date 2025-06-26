@@ -1,4 +1,6 @@
-# backend/app/crud.py - Versión FINAL y COMPLETA (con create_fact_adjustment)
+# backend/app/crud.py - Versión ACTUALIZADA para manejar UPSERT de ajustes,
+#                       nuevas funciones de fetch para cálculos y CRUD de comentarios.
+#                       CORREGIDO: Uso de 'created_at' en lugar de 'timestamp' para ManualInputComment
 
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
@@ -68,7 +70,7 @@ def create_key_figure(db: Session, key_figure: schemas.DimKeyFigureCreate):
 def get_adjustment_type(db: Session, adjustment_type_id: int):
     return db.query(models.DimAdjustmentType).filter(models.DimAdjustmentType.adjustment_type_id == adjustment_type_id).first()
 
-def get_adjustment_type_by_name(db: Session, name: str): 
+def get_adjustment_type_by_name(db: Session, name: str):
     return db.query(models.DimAdjustmentType).filter(models.DimAdjustmentType.name == name).first()
 
 def get_adjustment_types(db: Session, skip: int = 0, limit: int = 100):
@@ -87,11 +89,11 @@ def create_adjustment_type(db: Session, adj_type: schemas.DimAdjustmentTypeCreat
 
 # --- Operaciones CRUD para FactHistory ---
 def get_fact_history(
-    db: Session, 
-    client_id: uuid.UUID, 
-    sku_id: uuid.UUID, 
-    client_final_id: uuid.UUID, 
-    period: date, 
+    db: Session,
+    client_id: uuid.UUID,
+    sku_id: uuid.UUID,
+    client_final_id: uuid.UUID,
+    period: date,
     key_figure_id: int,
     source: str
 ):
@@ -109,7 +111,7 @@ def get_fact_history(
     ).first()
 
 def get_fact_history_data(
-    db: Session, 
+    db: Session,
     client_ids: Optional[List[uuid.UUID]] = None,
     sku_ids: Optional[List[uuid.UUID]] = None,
     start_period: Optional[date] = None,
@@ -136,8 +138,32 @@ def get_fact_history_data(
         query = query.filter(models.FactHistory.key_figure_id.in_(key_figure_ids))
     if sources:
         query = query.filter(models.FactHistory.source.in_(sources))
-    
+
     return query.offset(skip).limit(limit).all()
+
+# Nueva función para obtener historial de datos para cálculos específicos
+def get_fact_history_for_calculation(
+    db: Session,
+    client_id: uuid.UUID,
+    sku_id: uuid.UUID,
+    start_period: date,
+    end_period: date,
+    source: str = 'sales' # Asumimos 'sales' como fuente principal para historia cruda
+) -> List[models.FactHistory]:
+    # Siempre cargar relaciones para facilitar el uso en el engine
+    return db.query(models.FactHistory).options(
+        joinedload(models.FactHistory.client),
+        joinedload(models.FactHistory.sku)
+    ).filter(
+        models.FactHistory.client_id == client_id,
+        models.FactHistory.sku_id == sku_id,
+        models.FactHistory.period >= start_period,
+        models.FactHistory.period <= end_period,
+        models.FactHistory.source == source,
+        # Asumiendo key_figure_id 1 es 'Sales' para historia cruda
+        models.FactHistory.key_figure_id == 1
+    ).order_by(models.FactHistory.period).all()
+
 
 def create_fact_history(db: Session, fact_history: schemas.FactHistoryCreate, user_id: uuid.UUID):
     db_fact_history = models.FactHistory(
@@ -177,11 +203,11 @@ def update_fact_history(
     return db_fact_history
 
 def delete_fact_history(
-    db: Session, 
-    client_id: uuid.UUID, 
-    sku_id: uuid.UUID, 
-    client_final_id: uuid.UUID, 
-    period: date, 
+    db: Session,
+    client_id: uuid.UUID,
+    sku_id: uuid.UUID,
+    client_final_id: uuid.UUID,
+    period: date,
     key_figure_id: int,
     source: str
 ):
@@ -238,7 +264,7 @@ def create_forecast_version(db: Session, version: schemas.ForecastVersionCreate,
 
 # --- Operaciones CRUD para FactForecastStat ---
 def get_fact_forecast_stat(
-    db: Session, 
+    db: Session,
     client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date
 ):
     return db.query(models.FactForecastStat).filter(
@@ -249,7 +275,7 @@ def get_fact_forecast_stat(
     ).first()
 
 def get_fact_forecast_stat_data(
-    db: Session, 
+    db: Session,
     client_ids: Optional[List[uuid.UUID]] = None,
     sku_ids: Optional[List[uuid.UUID]] = None,
     start_period: Optional[date] = None,
@@ -273,7 +299,7 @@ def get_fact_forecast_stat_data(
         query = query.filter(models.FactForecastStat.period <= end_period)
     if forecast_run_ids:
         query = query.filter(models.FactForecastStat.forecast_run_id.in_(forecast_run_ids))
-    
+
     return query.offset(skip).limit(limit).all()
 
 def create_fact_forecast_stat_batch(db: Session, forecast_records: List[Dict[str, Any]]):
@@ -283,9 +309,9 @@ def create_fact_forecast_stat_batch(db: Session, forecast_records: List[Dict[str
 
 
 # --- Operaciones CRUD para FactAdjustments (¡Importante!) ---
-def get_fact_adjustments(
-    db: Session, 
-    client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date, 
+def get_fact_adjustments( # Ya existía, se usa para el upsert
+    db: Session,
+    client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date,
     key_figure_id: int, adjustment_type_id: int
 ):
     return db.query(models.FactAdjustments).filter(
@@ -298,7 +324,7 @@ def get_fact_adjustments(
     ).first()
 
 def get_fact_adjustments_data(
-    db: Session, 
+    db: Session,
     client_ids: Optional[List[uuid.UUID]] = None,
     sku_ids: Optional[List[uuid.UUID]] = None,
     start_period: Optional[date] = None,
@@ -328,29 +354,102 @@ def get_fact_adjustments_data(
         query = query.filter(models.FactAdjustments.adjustment_type_id.in_(adjustment_type_ids))
     return query.offset(skip).limit(limit).all()
 
-# --- FUNCION QUE FALTABA AÑADIR: create_fact_adjustment ---
-def create_fact_adjustment(db: Session, adjustment: schemas.FactAdjustmentsCreate):
-    db_adjustment = models.FactAdjustments(
+# Nueva función para obtener ajustes para cálculos específicos
+def get_fact_adjustments_for_calculation(
+    db: Session,
+    client_id: uuid.UUID,
+    sku_id: uuid.UUID,
+    start_period: date,
+    end_period: date,
+    key_figure_id: Optional[int] = None, # Para filtrar ajustes por figura clave aplicada
+    adjustment_type_ids: Optional[List[int]] = None # Para filtrar por tipo de ajuste (Override, Clean, etc.)
+) -> List[models.FactAdjustments]:
+    query = db.query(models.FactAdjustments).filter(
+        models.FactAdjustments.client_id == client_id,
+        models.FactAdjustments.sku_id == sku_id,
+        models.FactAdjustments.period >= start_period,
+        models.FactAdjustments.period <= end_period
+    ).options(
+        joinedload(models.FactAdjustments.client),
+        joinedload(models.FactAdjustments.sku),
+        joinedload(models.FactAdjustments.key_figure),
+        joinedload(models.FactAdjustments.adjustment_type)
+    )
+    if key_figure_id:
+        query = query.filter(models.FactAdjustments.key_figure_id == key_figure_id)
+    if adjustment_type_ids:
+        query = query.filter(models.FactAdjustments.adjustment_type_id.in_(adjustment_type_ids))
+    return query.order_by(models.FactAdjustments.period).all()
+
+
+def update_fact_adjustment(
+    db: Session,
+    client_id: uuid.UUID,
+    sku_id: uuid.UUID,
+    client_final_id: uuid.UUID,
+    period: date,
+    key_figure_id: int,
+    adjustment_type_id: int,
+    adjustment_update: schemas.FactAdjustmentsBase # Usar FactAdjustmentsBase para los campos a actualizar
+):
+    db_adjustment = get_fact_adjustments(db, client_id, sku_id, client_final_id, period, key_figure_id, adjustment_type_id)
+    if db_adjustment:
+        for key, value in adjustment_update.model_dump(exclude_unset=True).items():
+            setattr(db_adjustment, key, value)
+        db_adjustment.updated_at = func.now() # Actualizar timestamp
+        db.commit()
+        db.refresh(db_adjustment)
+    return db_adjustment
+
+
+def upsert_fact_adjustment(db: Session, adjustment: schemas.FactAdjustmentsCreate):
+    # Intentar encontrar un ajuste existente
+    existing_adjustment = get_fact_adjustments(
+        db,
         client_id=adjustment.client_id,
         sku_id=adjustment.sku_id,
         client_final_id=adjustment.client_final_id,
         period=adjustment.period,
         key_figure_id=adjustment.key_figure_id,
-        adjustment_type_id=adjustment.adjustment_type_id,
-        value=adjustment.value,
-        comment=adjustment.comment,
-        user_id=adjustment.user_id
+        adjustment_type_id=adjustment.adjustment_type_id
     )
-    db.add(db_adjustment)
-    db.commit()
-    db.refresh(db_adjustment)
-    return db_adjustment
+
+    if existing_adjustment:
+        # Si existe, actualizarlo
+        updated_adjustment = update_fact_adjustment(
+            db,
+            client_id=adjustment.client_id,
+            sku_id=adjustment.sku_id,
+            client_final_id=adjustment.client_final_id,
+            period=adjustment.period,
+            key_figure_id=adjustment.key_figure_id,
+            adjustment_type_id=adjustment.adjustment_type_id,
+            adjustment_update=adjustment # Pasamos el esquema completo para la actualización
+        )
+        return updated_adjustment
+    else:
+        # Si no existe, crearlo
+        db_adjustment = models.FactAdjustments(
+            client_id=adjustment.client_id,
+            sku_id=adjustment.sku_id,
+            client_final_id=adjustment.client_final_id,
+            period=adjustment.period,
+            key_figure_id=adjustment.key_figure_id,
+            adjustment_type_id=adjustment.adjustment_type_id,
+            value=adjustment.value,
+            comment=adjustment.comment,
+            user_id=adjustment.user_id
+        )
+        db.add(db_adjustment)
+        db.commit()
+        db.refresh(db_adjustment)
+        return db_adjustment
 
 # --- Operaciones CRUD para FactForecastVersioned (Básicas GET) ---
 def get_fact_forecast_versioned(
-    db: Session, 
-    version_id: uuid.UUID, 
-    client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date, 
+    db: Session,
+    version_id: uuid.UUID,
+    client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date,
     key_figure_id: int
 ):
     return db.query(models.FactForecastVersioned).filter(
@@ -363,7 +462,7 @@ def get_fact_forecast_versioned(
     ).first()
 
 def get_fact_forecast_versioned_data(
-    db: Session, 
+    db: Session,
     version_ids: Optional[List[uuid.UUID]] = None,
     client_ids: Optional[List[uuid.UUID]] = None,
     sku_ids: Optional[List[uuid.UUID]] = None,
@@ -391,12 +490,12 @@ def get_fact_forecast_versioned_data(
         query = query.filter(models.FactForecastVersioned.period <= end_period)
     if key_figure_ids:
         query = query.filter(models.FactForecastVersioned.key_figure_id.in_(key_figure_ids))
-    
+
     return query.offset(skip).limit(limit).all()
 
-# --- Operaciones CRUD para ManualInputComments (Básicas GET) ---
-def get_manual_input_comment(
-    db: Session, 
+# --- Operaciones CRUD para ManualInputComments (Básicas GET y CREATE) ---
+def get_manual_input_comment( # Ya existía
+    db: Session,
     client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date, key_figure_id: int
 ):
     return db.query(models.ManualInputComment).filter(
@@ -407,8 +506,8 @@ def get_manual_input_comment(
         models.ManualInputComment.key_figure_id == key_figure_id
     ).first()
 
-def get_manual_input_comment_data(
-    db: Session, 
+def get_manual_input_comment_data( # Ya existía
+    db: Session,
     client_ids: Optional[List[uuid.UUID]] = None,
     sku_ids: Optional[List[uuid.UUID]] = None,
     start_period: Optional[date] = None,
@@ -432,4 +531,21 @@ def get_manual_input_comment_data(
         query = query.filter(models.ManualInputComment.period <= end_period)
     if key_figure_ids:
         query = query.filter(models.ManualInputComment.key_figure_id.in_(key_figure_ids))
-    return query.offset(skip).limit(limit).all()
+    return query.order_by(models.ManualInputComment.created_at.desc()).offset(skip).limit(limit).all() # CORREGIDO: Usar created_at
+
+
+# Nueva función para crear un comentario
+def create_manual_input_comment(db: Session, comment: schemas.ManualInputCommentCreate):
+    db_comment = models.ManualInputComment(
+        client_id=comment.client_id,
+        sku_id=comment.sku_id,
+        client_final_id=comment.client_final_id,
+        period=comment.period,
+        key_figure_id=comment.key_figure_id,
+        comment=comment.comment,
+        user_id=comment.user_id
+    )
+    db.add(db_comment)
+    db.commit()
+    db.refresh(db_comment)
+    return db_comment
