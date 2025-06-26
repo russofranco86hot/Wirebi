@@ -14,6 +14,15 @@ import 'ag-grid-community/styles/ag-theme-alpine.css';
 
 import SalesChart from './SalesChart';
 
+// Constantes para IDs de Key Figures
+const KF_SALES_ID = 1;
+const KF_ORDER_ID = 2;
+const KF_SHIPMENTS_ID = 3;
+const KF_STATISTICAL_FORECAST_ID = 4;
+const KF_CLEAN_HISTORY_ID = 5;
+const KF_FINAL_FORECAST_ID = 6;
+
+
 // Componente auxiliar para manejar la carga/error y renderizar la tabla AG Grid
 const DataTableRenderer = React.memo(({ loading, error, rowData, columnDefs, onGridReady, onCellValueChanged, defaultColDef, gridRef, getContextMenuItems }) => {
   if (loading) {
@@ -69,7 +78,7 @@ const CommentModal = ({ isOpen, onClose, cellData, comments, onSaveComment }) =>
       zIndex: 1000, boxShadow: '0 4px 8px rgba(0,0,0,0.1)', minWidth: '400px', maxWidth: '600px'
     }}>
       <h3>Comentarios para {cellData?.clientName} - {cellData?.skuName} - {new Date(cellData?.period).toLocaleDateString()} ({cellData?.keyFigureName})</h3>
-
+      
       <h4>Agregar nuevo comentario:</h4>
       <textarea
         value={newComment}
@@ -101,12 +110,15 @@ const CommentModal = ({ isOpen, onClose, cellData, comments, onSaveComment }) =>
 
 
 function SalesForecastData() {
+  // --- TODAS LAS DECLARACIONES DE ESTADOS Y HOOKS DEBEN IR AQUÍ AL PRINCIPIO ---
+  // Estos deben ser lo primero que se declara dentro del componente funcional, sin excepciones.
+
   // ESTADOS
   const [historyData, setHistoryData] = useState([]);
   const [forecastVersionedData, setForecastVersionedData] = useState([]);
   const [forecastStatData, setForecastStatData] = useState([]);
-  const [cleanHistoryData, setCleanHistoryData] = useState([]); // Nuevo estado
-  const [finalForecastData, setFinalForecastData] = useState([]); // Nuevo estado
+  const [cleanHistoryData, setCleanHistoryData] = useState([]);
+  const [finalForecastData, setFinalForecastData] = useState([]);
   const [loadingData, setLoadingData] = useState(false);
   const [errorData, setErrorData] = useState(null);
 
@@ -120,7 +132,7 @@ function SalesForecastData() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [selectedKeyFigures, setSelectedKeyFigures] = useState(null);
-  const [selectedSources, setSelectedSources] = useState([]); // Cambiado a [] por defecto
+  const [selectedSources, setSelectedSources] = useState([]);
 
   const [forecastAlpha, setForecastAlpha] = useState(0.5);
   const [forecastModel, setForecastModel] = useState("ETS");
@@ -129,322 +141,20 @@ function SalesForecastData() {
   const [forecastGenerationError, setForecastGenerationError] = useState(null);
   const [forecastGenerationMessage, setForecastGenerationMessage] = useState(null);
 
-  const [isCommentModalOpen, setIsCommentModalOpen] = useState(false); // Estado para el modal de comentarios
-  const [selectedCellForComment, setSelectedCellForComment] = useState(null); // Datos de la celda seleccionada
-  const [commentsForSelectedCell, setCommentsForSelectedCell] = useState([]); // Comentarios para la celda
+  const [isCommentModalOpen, setIsCommentModalOpen] = useState(false);
+  const [selectedCellForComment, setSelectedCellForComment] = useState(null);
+  const [commentsForSelectedCell, setCommentsForSelectedCell] = useState([]);
+
+  const [forecastStartDate, setForecastStartDate] = useState(null);
 
   // REFS
   const gridRef = useRef();
 
-  // Column Definitions para AG Grid
-  const [columnDefs] = useState([
-    { headerName: 'Cliente', field: 'clientName', minWidth: 150, filter: true, sortable: true },
-    { headerName: 'SKU', field: 'skuName', minWidth: 150, filter: true, sortable: true },
-    { headerName: 'Período', field: 'period', minWidth: 120, filter: 'agDateColumnFilter', sortable: true,
-      valueFormatter: params => params.value ? new Date(params.value).toLocaleDateString('es-AR', { year: 'numeric', month: '2-digit', day: '2-digit' }) : ''
-    },
-    { headerName: 'Figura Clave', field: 'keyFigureName', minWidth: 150, filter: true, sortable: true },
-    { headerName: 'Fuente', field: 'source', minWidth: 100, filter: true, sortable: true },
-    {
-      headerName: 'Valor',
-      field: 'value',
-      minWidth: 120,
-      type: 'numericColumn',
-      editable: params => params.data.keyFigureName === 'Pronóstico Estadístico' || params.data.keyFigureName === 'Pronóstico Final', // Ahora también editable el Pronóstico Final
-      valueParser: params => Number(params.newValue),
-      cellClassRules: {
-        'rag-red': params => params.value < 0,
-        // Clase para indicar que hay comentarios
-        'has-comments': params => params.data.hasComments,
-      },
-      // Cell Renderer para mostrar un icono si tiene comentarios
-      cellRenderer: (params) => {
-        const value = params.value;
-        const hasComments = params.data.hasComments;
-        return (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-            <span>{value !== undefined && value !== null ? value.toLocaleString('es-AR') : ''}</span>
-            {hasComments && <span title="Esta celda tiene comentarios" style={{ marginLeft: '5px', cursor: 'pointer' }}>💬</span>}
-          </div>
-        );
-      }
-    },
-    { headerName: 'Modelo', field: 'modelUsed', minWidth: 100, filter: true, sortable: true },
-    { headerName: 'Run ID', field: 'forecastRunId', minWidth: 100, filter: true, sortable: true, valueFormatter: params => params.value ? String(params.value).substring(0, 8) + '...' : '' },
-  ]);
+  // --- DEFINICIÓN DE CALLBACKS (useCallback) Y MEMOIZACIONES (useMemo) ---
+  // Todas estas funciones deben declararse aquí, DESPUÉS de los `useState` y `useRef`.
+  // Es crucial que las funciones que son dependencias de otras se declaren primero.
 
-  // Callbacks para AG Grid: Lógica de edición
-  const isCellEditable = useCallback(params => {
-    return params.colDef.field === 'value' && (params.data.keyFigureName === 'Pronóstico Estadístico' || params.data.keyFigureName === 'Pronóstico Final');
-  }, []);
-
-  const onCellValueChanged = useCallback(async event => {
-    console.log('Cell value changed:', event.data, 'New Value:', event.newValue, 'Old Value:', event.oldValue);
-
-    if (event.newValue === event.oldValue) {
-      return;
-    }
-
-    const { clientId, skuId, clientFinalId, period, keyFigureId, keyFigureName } = event.data;
-    const newValue = Number(event.newValue);
-
-    let adjustmentTypeId;
-    // Determinar el tipo de ajuste según la figura clave
-    if (keyFigureName === 'Pronóstico Estadístico' || keyFigureName === 'Pronóstico Final') {
-      const overrideAdjType = adjustmentTypes.find(type => type.name === 'Override');
-      if (!overrideAdjType) {
-        console.error("Tipo de ajuste 'Override' no encontrado. No se puede guardar el ajuste.");
-        return;
-      }
-      adjustmentTypeId = overrideAdjType.adjustment_type_id;
-    } else {
-      console.error("Solo 'Pronóstico Estadístico' y 'Pronóstico Final' son editables para ajustes directos.");
-      return;
-    }
-
-    try {
-      const adjustmentPayload = {
-        client_id: clientId,
-        sku_id: skuId,
-        client_final_id: clientFinalId,
-        period: period,
-        key_figure_id: keyFigureId,
-        adjustment_type_id: adjustmentTypeId,
-        value: newValue,
-        comment: `Ajuste manual de ${event.oldValue} a ${event.newValue} para ${keyFigureName}`,
-        user_id: "00000000-0000-0000-0000-000000000001"
-      };
-
-      await sendManualAdjustment(adjustmentPayload);
-      console.log("Ajuste guardado exitosamente!");
-
-      // Para actualizar el chart y la tabla, recargamos los datos relevantes
-      // Si el ajuste es al 'Pronóstico Estadístico' o 'Pronóstico Final', actualizamos los estados correspondientes
-      if (keyFigureName === 'Pronóstico Estadístico') {
-        setForecastStatData(prevData => {
-          return prevData.map(item => {
-            if (item.client_id === clientId && item.sku_id === skuId && item.period === period) {
-              return { ...item, value: newValue };
-            }
-            return item;
-          });
-        });
-      } else if (keyFigureName === 'Pronóstico Final') {
-        // Al editar Pronóstico Final, solo se actualiza localmente si se refleja en el gráfico
-        // y se pasa al backend. No se necesita actualizar forecastStatData.
-        setFinalForecastData(prevData => {
-          return prevData.map(item => {
-            if (item.client_id === clientId && item.sku_id === skuId && item.period === period) {
-              return { ...item, value: newValue };
-            }
-            return item;
-          });
-        });
-      }
-
-      // Opcionalmente, puedes volver a llamar handleSearch para recargar TODOS los datos
-      // y asegurarte de que Historia Limpia y Pronóstico Final se recalculen en el backend
-      // y se reflejen en el frontend, pero para una respuesta más rápida del UI
-      // se prioriza la actualización local de los estados directos.
-      // handleSearch(); // Descomentar si la recarga completa es preferible después de cada ajuste
-
-    } catch (e) {
-      console.error("Error al guardar el ajuste manual:", e);
-      // Podrías mostrar un mensaje de error más amigable aquí
-    }
-  }, [adjustmentTypes]);
-
-
-  const onGridReady = useCallback((params) => {
-    // params.api.sizeColumnsToFit();
-  }, []);
-
-
-  // --- Funciones para el Modal de Comentarios ---
-  const openCommentModal = useCallback(async (cellData) => {
-    setSelectedCellForComment(cellData);
-    setIsCommentModalOpen(true);
-    // Fetch comments for the selected cell
-    try {
-      const fetchedComments = await fetchComments({
-        clientIds: [cellData.clientId],
-        skuIds: [cellData.skuId],
-        startPeriod: cellData.period,
-        endPeriod: cellData.period,
-        keyFigureIds: [cellData.keyFigureId],
-      });
-      setCommentsForSelectedCell(fetchedComments);
-    } catch (error) {
-      console.error("Error fetching comments:", error);
-      setCommentsForSelectedCell([]); // Clear comments on error
-    }
-  }, []);
-
-  const closeCommentModal = useCallback(() => {
-    setIsCommentModalOpen(false);
-    setSelectedCellForComment(null);
-    setCommentsForSelectedCell([]);
-  }, []);
-
-  const handleSaveComment = useCallback(async (cellData, commentText) => {
-    const commentPayload = {
-      client_id: cellData.clientId,
-      sku_id: cellData.skuId,
-      client_final_id: cellData.clientFinalId,
-      period: cellData.period,
-      key_figure_id: cellData.keyFigureId,
-      comment: commentText,
-      user_id: "00000000-0000-0000-0000-000000000001", // ID de usuario por defecto
-    };
-
-    try {
-      await sendComment(commentPayload);
-      console.log("Comentario guardado exitosamente!");
-      // Actualizar los comentarios para la celda seleccionada inmediatamente
-      // Esto simula una recarga sin necesidad de cerrar y abrir el modal
-      const updatedComments = await fetchComments({
-        clientIds: [cellData.clientId],
-        skuIds: [cellData.skuId],
-        startPeriod: cellData.period,
-        endPeriod: cellData.period,
-        keyFigureIds: [cellData.keyFigureId],
-      });
-      setCommentsForSelectedCell(updatedComments);
-      // Actualizar el estado de la celda para mostrar el icono de comentario
-      if (gridRef.current && gridRef.current.api) {
-        const rowNode = gridRef.current.api.getRowNode(cellData.id);
-        if (rowNode) {
-          rowNode.setData({ ...rowNode.data, hasComments: true });
-        }
-      }
-
-    } catch (e) {
-      console.error("Error al guardar el comentario:", e);
-    }
-  }, [gridRef]);
-
-
-  // --- Menú Contextual (Clic Derecho) de AG Grid ---
-  const getContextMenuItems = useCallback((params) => {
-    const defaultItems = params.defaultItems.filter(item => item !== 'copyWithHeaders' && item !== 'paste'); // Remover opciones por defecto que no queremos
-    const cellData = params.node?.data;
-
-    if (!cellData) return defaultItems; // Si no hay datos de celda, solo mostrar elementos por defecto
-
-    return [
-      ...defaultItems,
-      'separator',
-      {
-        name: 'Agregar un comentario',
-        action: () => {
-          openCommentModal(cellData);
-        },
-        icon: '<span class="ag-icon ag-icon-comments"></span>', // Puedes usar un icono de AG Grid o uno personalizado
-      },
-      {
-        name: 'Ver historial de comentarios anteriores',
-        action: () => {
-          openCommentModal(cellData);
-        },
-        icon: '<span class="ag-icon ag-icon-clipboard"></span>', // Icono genérico para historial
-      },
-    ];
-  }, [openCommentModal]);
-
-
-  const memoizedColumnDefs = useMemo(() => {
-    return columnDefs.map(col => {
-      if (col.field === 'value') {
-        return { ...col, editable: isCellEditable };
-      }
-      return col;
-    });
-  }, [columnDefs, isCellEditable]);
-
-
-  const rowData = useMemo(() => {
-    const combined = [];
-
-    // Mapeo para rastrear si una combinación Cliente-SKU-Período-FiguraClave tiene comentarios
-    const commentsPresence = {};
-    commentsForSelectedCell.forEach(comment => {
-      const periodString = new Date(comment.period).toISOString().split('T')[0];
-      const id = `${comment.client_id}-${comment.sku_id}-${periodString}-${comment.key_figure_id}`;
-      commentsPresence[id] = true;
-    });
-
-    // Función auxiliar para añadir elementos y marcar si tienen comentarios
-    const addDataItem = (item, keyFigureName, source, modelUsed, forecastRunId, dataType, keyFigureId) => {
-      const periodString = new Date(item.period).toISOString().split('T')[0]; // Formatear para el ID
-      const id = `${item.client_id}-${item.sku_id}-${periodString}-${keyFigureId || item.key_figure_id}`; // Usar KFId pasado o del item
-      combined.push({
-        id: id,
-        clientName: item.clientName || item.client?.client_name || 'N/A',
-        skuName: item.skuName || item.sku?.sku_name || 'N/A',
-        period: item.period,
-        keyFigureName: keyFigureName,
-        source: source,
-        value: item.value,
-        modelUsed: modelUsed,
-        forecastRunId: forecastRunId,
-        clientId: item.client_id,
-        skuId: item.sku_id,
-        clientFinalId: item.client_final_id,
-        keyFigureId: keyFigureId,
-        dataType: dataType,
-        hasComments: commentsPresence[id] || false, // Añadir la bandera de comentarios
-      });
-    };
-
-    historyData.forEach(item => {
-      addDataItem(item, item.key_figure?.name || 'N/A', item.source, 'Historia', 'N/A', 'history', item.key_figure_id);
-    });
-
-    forecastStatData.forEach(item => {
-      addDataItem(item, 'Pronóstico Estadístico', 'Forecast', item.model_used, item.forecast_run_id, 'forecast_stat', 4);
-    });
-
-    cleanHistoryData.forEach(item => { // Añadir Historia Limpia
-      addDataItem(item, 'Historia Limpia', 'Calculado', 'N/A', 'N/A', 'clean_history', 5);
-    });
-
-    finalForecastData.forEach(item => { // Añadir Pronóstico Final
-      addDataItem(item, 'Pronóstico Final', 'Calculado', 'N/A', 'N/A', 'final_forecast', 6);
-    });
-
-
-    return combined.sort((a, b) => {
-      if (a.clientName !== b.clientName) return a.clientName.localeCompare(b.clientName);
-      if (a.skuName !== b.skuName) return a.skuName.localeCompare(b.skuName);
-      if (a.period !== b.period) return new Date(a.period) - new Date(b.period);
-      // Ordenar para que Historia siempre esté primero, luego Historia Limpia, luego Pronóstico Estadístico, luego Pronóstico Final
-      const order = { 'Historia': 1, 'Historia Limpia': 2, 'Pronóstico Estadístico': 3, 'Pronóstico Final': 4 };
-      return (order[a.keyFigureName] || 99) - (order[b.keyFigureName] || 99);
-    });
-  }, [historyData, forecastStatData, cleanHistoryData, finalForecastData, commentsForSelectedCell]);
-
-
-  // Manejadores de cambios en filtros (useCallback)
-  const handleKeyFigureChange = useCallback((event) => {
-    const { value, checked } = event.target;
-    setSelectedKeyFigures(prev => {
-        const currentSelection = prev || [];
-        const newSelection = checked ? [...currentSelection, value] : currentSelection.filter(kfId => kfId !== value);
-        return newSelection.length > 0 ? newSelection : null;
-    });
-  }, []);
-
-  const handleSourceChange = useCallback((event) => {
-    const { value, checked } = event.target;
-    setSelectedSources(prev => {
-        const currentSelection = prev || [];
-        const newSelection = checked ? [...currentSelection, value] : currentSelection.filter(source => source !== value);
-        // CORREGIDO: Devolver siempre un array, vacío si no hay selecciones
-        return newSelection; 
-    });
-  }, []);
-
-  // Función para manejar la búsqueda de datos (handleSearch)
+  // Función para manejar la búsqueda de datos (handleSearch) - DECLARADA TEMPRANO YA QUE OTRAS LA USAN
   const handleSearch = useCallback(async () => {
     setLoadingData(true);
     setErrorData(null);
@@ -456,15 +166,12 @@ function SalesForecastData() {
         endPeriod: endDate || null,
         keyFigureIds: selectedKeyFigures,
         sources: selectedSources,
-        // Para la historia limpia y pronóstico final, necesitamos un solo client/sku/client_final
         clientId: selectedClient || null,
         skuId: selectedSku || null,
-        // Esto es un placeholder. En un sistema real, clientFinalId debe obtenerse o ser un campo de filtro.
-        // Aquí asumimos que si selectedClient está, podemos usarlo como clientFinalId
-        clientFinalId: selectedClient || '00000000-0000-0000-0000-000000000001', // Asumimos un default o el mismo client_id
+        clientFinalId: selectedClient || '00000000-0000-0000-0000-000000000001',
       };
 
-      const [historical, versioned, forecastStat, cleanHistory, finalForecast] = await Promise.all([
+      const [historical, versioned, forecastStat, cleanHistory, finalForecast, allComments] = await Promise.all([
         fetchHistoricalData(filterParams),
         fetchForecastVersionedData(filterParams),
         fetchForecastStatData({
@@ -473,34 +180,33 @@ function SalesForecastData() {
             startPeriod: filterParams.startPeriod,
             endPeriod: filterParams.endPeriod,
         }),
-        // Nuevas llamadas para Historia Limpia y Pronóstico Final
         selectedClient && selectedSku && startDate && endDate ? fetchCleanHistoryData(filterParams) : Promise.resolve([]),
         selectedClient && selectedSku && startDate && endDate ? fetchFinalForecastData(filterParams) : Promise.resolve([]),
+        fetchComments({
+            clientIds: filterParams.clientIds,
+            skuIds: filterParams.skuIds,
+            startPeriod: filterParams.startPeriod,
+            endPeriod: filterParams.endPeriod,
+        }),
       ]);
 
       setHistoryData(historical);
       setForecastVersionedData(versioned);
       setForecastStatData(forecastStat);
-      setCleanHistoryData(cleanHistory); // Actualizar estado de Historia Limpia
-      setFinalForecastData(finalForecast); // Actualizar estado de Pronóstico Final
+      setCleanHistoryData(cleanHistory);
+      setFinalForecastData(finalForecast);
+      setCommentsForSelectedCell(allComments);
 
-      // También cargar todos los comentarios para el rango actual de datos
-      const allComments = await fetchComments({
-        clientIds: filterParams.clientIds,
-        skuIds: filterParams.skuIds,
-        startPeriod: filterParams.startPeriod,
-        endPeriod: filterParams.endPeriod,
-        // No filtramos por KeyFigureId aquí para obtener todos los comentarios
-      });
-      // Mapear la presencia de comentarios para la visualización en la tabla
-      const commentsMap = {};
-      allComments.forEach(comment => {
-        const periodString = new Date(comment.period).toISOString().split('T')[0];
-        const id = `${comment.client_id}-${comment.sku_id}-${periodString}-${comment.key_figure_id}`;
-        commentsMap[id] = true;
-      });
-      // Aplicar 'hasComments' a rowData de forma reactiva a través de un nuevo estado si es necesario,
-      // o directamente en la construcción de rowData. Por ahora, se maneja en rowData useMemo.
+      // Calcular y establecer forecastStartDate
+      if (forecastStat.length > 0) {
+        const minForecastPeriod = forecastStat.reduce((min, p) => 
+          new Date(p.period) < new Date(min.period) ? p : min, forecastStat[0]
+        ).period;
+        setForecastStartDate(new Date(minForecastPeriod));
+      } else {
+        setForecastStartDate(null); // Si no hay pronóstico, no hay fecha de inicio de pronóstico
+      }
+
 
     } catch (e) {
       setErrorData(e.message);
@@ -510,17 +216,11 @@ function SalesForecastData() {
   }, [selectedClient, selectedSku, startDate, endDate, selectedKeyFigures, selectedSources]);
 
 
-  // Función para disparar la generación de Forecast (handleGenerateForecast)
+  // Función para disparar la generación de Forecast (handleGenerateForecast) - También usa handleSearch
   const handleGenerateForecast = useCallback(async () => {
     setGeneratingForecast(true);
     setForecastGenerationError(null);
     setForecastGenerationMessage(null);
-
-    // --- DEBUGGING LOG - Check raw state values ---
-    console.log("DEBUG: selectedClient:", selectedClient);
-    console.log("DEBUG: selectedSku:", selectedSku);
-    console.log("DEBUG: selectedSources:", selectedSources);
-    // --- END DEBUGGING LOG ---
 
     // Validaciones más robustas
     if (!selectedClient || selectedClient === '') {
@@ -541,12 +241,11 @@ function SalesForecastData() {
     const historySource = selectedSources[0];
     const validSources = ['sales', 'order', 'shipments'];
     if (!validSources.includes(historySource)) {
-        setForecastGenerationError("La fuente del historial seleccionada no es válida. Por favor, elige 'Sales', 'Order' o 'Shipments'.");
+        setForecastGenerationError("La fuente del historial seleccionada no es válida. Por favor, elige 'Sales', 'Order' o 'Service'.");
         setGeneratingForecast(false);
         return;
     }
     
-    // Convertir a float/int de forma segura
     const smoothingAlpha = parseFloat(forecastAlpha);
     const forecastHorizonInt = parseInt(forecastHorizon, 10);
 
@@ -581,18 +280,449 @@ function SalesForecastData() {
     }
   }, [selectedClient, selectedSku, selectedSources, forecastAlpha, forecastModel, forecastHorizon, handleSearch]);
 
+
+  // Callbacks para AG Grid: Lógica de edición
+  const isCellEditable = useCallback(params => {
+    // Permitir edición solo si la columna es editable Y es Pronóstico Estadístico o Pronóstico Final
+    // params.colDef.editable viene del dynamicColumnDefs
+    // params.colDef.colId viene del dynamicColumnDefs y es algo como "YYYY-MM-DD_KeyFigureName"
+    if (!params.colDef.editable || !params.colDef.colId || !params.colDef.colId.includes('_')) {
+        return false; // No editable si no es una columna de valor dinámica o no está marcada como editable
+    }
+    const keyFigureNameInColumn = params.colDef.colId.split('_').pop();
+    return (keyFigureNameInColumn === 'Pronóstico Estadístico' || keyFigureNameInColumn === 'Pronóstico Final');
+  }, []);
+
+
+  const onCellValueChanged = useCallback(async event => {
+    console.log('Cell value changed:', event.data, 'New Value:', event.newValue, 'Old Value:', event.oldValue);
+    console.log('Column ID (event.colDef.colId):', event.colDef.colId);
+    console.log('event.colDef object:', event.colDef);
+    console.log('Full event object:', event);
+
+
+    if (event.newValue === event.oldValue) {
+      return;
+    }
+
+    // Verificar si la columna es una de las dinámicas de período/figura clave
+    // Esta validación ya debería ser cubierta por isCellEditable, pero se mantiene como doble chequeo.
+    if (!event.colDef.colId || !event.colDef.colId.includes('_')) {
+        console.warn("Edición ignorada: Columna no reconocida para edición de datos de pronóstico/historial.");
+        return;
+    }
+
+    const [periodString, keyFigureName] = event.colDef.colId.split('_');
+    const period = new Date(periodString);
+    const newValue = Number(event.newValue);
+
+    const { clientId, skuId, clientFinalId } = event.data;
+
+    const keyFigure = keyFigures.find(kf => kf.name === keyFigureName);
+    if (!keyFigure) {
+        console.error(`Key Figure '${keyFigureName}' no encontrada. No se puede guardar el ajuste.`);
+        return;
+    }
+    const keyFigureId = keyFigure.key_figure_id;
+
+    let adjustmentTypeId;
+    // La lógica de isCellEditable ya garantiza que solo se edita Pronóstico Estadístico o Final
+    const overrideAdjType = adjustmentTypes.find(type => type.name === 'Override');
+    if (!overrideAdjType) {
+        console.error("Tipo de ajuste 'Override' no encontrado. No se puede guardar el ajuste.");
+        return;
+    }
+    adjustmentTypeId = overrideAdjType.adjustment_type_id;
+
+    try {
+      const adjustmentPayload = {
+        client_id: clientId,
+        sku_id: skuId,
+        client_final_id: clientFinalId,
+        period: period.toISOString().split('T')[0],
+        key_figure_id: keyFigureId,
+        adjustment_type_id: adjustmentTypeId,
+        value: newValue,
+        comment: `Ajuste manual de ${event.oldValue} a ${event.newValue} para ${keyFigureName} en ${period.toLocaleDateString()}`,
+        user_id: "00000000-0000-0000-0000-000000000001"
+      };
+
+      await sendManualAdjustment(adjustmentPayload);
+      console.log("Ajuste guardado exitosamente!");
+
+      // --- INICIO: Actualización de estado local para feedback inmediato ---
+      const updateSpecificState = (prevData) => {
+          return prevData.map(item => {
+              const itemPeriodIso = new Date(item.period).toISOString().split('T')[0];
+              const targetPeriodIso = period.toISOString().split('T')[0];
+
+              if (item.client_id === clientId && item.sku_id === skuId && itemPeriodIso === targetPeriodIso) {
+                  console.log(`DEBUG: Found item for update! Changing value for ${item.client_id}-${item.sku_id}-${itemPeriodIso} from ${item.value} to ${newValue}`);
+                  return { ...item, value: newValue };
+              }
+              return item;
+          });
+      };
+
+      if (keyFigureName === 'Pronóstico Estadístico') {
+        setForecastStatData(prevData => updateSpecificState(prevData));
+      } else if (keyFigureName === 'Pronóstico Final') {
+        setFinalForecastData(prevData => updateSpecificState(prevData));
+      }
+      // --- FIN: Actualización de estado local para feedback inmediato ---
+      
+      // Removed handleSearch() here to test immediate visual update.
+      // User must click "Buscar Datos" to persist changes and update calculations.
+      
+    } catch (e) {
+      console.error("Error al guardar el ajuste manual:", e);
+    }
+  }, [adjustmentTypes, keyFigures, forecastStatData, finalForecastData]); // Removed handleSearch from dependencies as it's not called
+
+
+  const onGridReady = useCallback((params) => {
+    // params.api.sizeColumnsToFit();
+  }, []);
+
+
+  // --- Funciones para el Modal de Comentarios ---
+  const openCommentModal = useCallback(async (cellData) => {
+    setSelectedCellForComment(cellData);
+    setIsCommentModalOpen(true);
+    // Fetch comments for the selected cell
+    try {
+      const fetchedComments = await fetchComments({
+        clientIds: [cellData.clientId],
+        skuIds: [cellData.skuId],
+        startPeriod: cellData.period.toISOString().split('T')[0],
+        endPeriod: cellData.period.toISOString().split('T')[0],
+        keyFigureIds: [cellData.keyFigureId],
+      });
+      setCommentsForSelectedCell(fetchedComments);
+    } catch (error) {
+      console.error("Error fetching comments:", error);
+      setCommentsForSelectedCell([]);
+    }
+  }, []);
+
+  const closeCommentModal = useCallback(() => {
+    setIsCommentModalOpen(false);
+    setSelectedCellForComment(null);
+    setCommentsForSelectedCell([]);
+  }, []);
+
+  const handleSaveComment = useCallback(async (cellData, commentText) => {
+    const commentPayload = {
+      client_id: cellData.clientId,
+      sku_id: cellData.skuId,
+      client_final_id: cellData.clientFinalId,
+      period: cellData.period.toISOString().split('T')[0],
+      key_figure_id: cellData.keyFigureId,
+      comment: commentText,
+      user_id: "00000000-0000-0000-0000-000000000001",
+    };
+
+    try {
+      await sendComment(commentPayload);
+      console.log("Comentario guardado exitosamente!");
+      
+      handleSearch(); // Recargar todos los datos para asegurar la consistencia de los iconos
+      
+    } catch (e) {
+      console.error("Error al guardar el comentario:", e);
+    }
+  }, [handleSearch]);
+
+  // --- Menú Contextual (Clic Derecho) de AG Grid ---
+  const getContextMenuItems = useCallback((params) => {
+    const defaultItems = params.defaultItems.filter(item => item !== 'copyWithHeaders' && item !== 'paste');
+    const cellData = params.node?.data;
+
+    if (!cellData || !params.column) return defaultItems;
+
+    let period = null;
+    let keyFigureName = null;
+    let keyFigureId = null;
+
+    if (params.column.colId && params.column.colId.includes('_')) {
+        const [periodStr, kfName] = params.column.colId.split('_');
+        period = new Date(periodStr);
+        keyFigureName = kfName;
+        const kf = keyFigures.find(k => k.name === keyFigureName);
+        keyFigureId = kf ? kf.key_figure_id : null;
+    } else {
+        return defaultItems;
+    }
+
+    if (!period || !keyFigureId) {
+        return defaultItems;
+    }
+
+    const dataForComment = {
+        ...cellData,
+        period: period,
+        keyFigureName: keyFigureName,
+        keyFigureId: keyFigureId,
+        id: `${cellData.clientId}-${cellData.skuId}-${period.toISOString().split('T')[0]}-${keyFigureId}`,
+    };
+
+    return [
+      ...defaultItems,
+      'separator',
+      {
+        name: 'Agregar un comentario',
+        action: () => {
+          openCommentModal(dataForComment);
+        },
+        icon: '<span class="ag-icon ag-icon-comments"></span>',
+      },
+      {
+        name: 'Ver historial de comentarios anteriores',
+        action: () => {
+          openCommentModal(dataForComment);
+        },
+        icon: '<span class="ag-icon ag-icon-clipboard"></span>',
+      },
+    ];
+  }, [openCommentModal, keyFigures]);
+
+
+  // --- NUEVA LÓGICA: Preparación de rowData pivotada y ColumnDefs dinámicas ---
+  const { processedRowData, dynamicColumnDefs } = useMemo(() => {
+    // console.log("DEBUG: useMemo dependencies:", { historyData, forecastStatData, cleanHistoryData, finalForecastData, keyFigures, commentsForSelectedCell, forecastStartDate });
+
+    const allData = [
+      ...historyData.map(item => ({ ...item, type: 'history', kf_id: item.key_figure_id, kf_name: item.key_figure?.name || 'N/A' })),
+      ...forecastStatData.map(item => ({ ...item, type: 'forecast_stat', kf_id: KF_STATISTICAL_FORECAST_ID, kf_name: 'Pronóstico Estadístico' })),
+      ...cleanHistoryData.map(item => ({ ...item, type: 'clean_history', kf_id: KF_CLEAN_HISTORY_ID, kf_name: 'Historia Limpia' })),
+      ...finalForecastData.map(item => ({ ...item, type: 'final_forecast', kf_id: KF_FINAL_FORECAST_ID, kf_name: 'Pronóstico Final' })),
+    ];
+
+    const uniquePeriods = new Set();
+    const uniqueKeyFigureNames = new Set();
+    
+    const commentsMap = {};
+    commentsForSelectedCell.forEach(comment => {
+        const periodString = new Date(comment.period).toISOString().split('T')[0];
+        const id = `${comment.client_id}-${comment.sku_id}-${periodString}-${comment.key_figure_id}`;
+        commentsMap[id] = true;
+    });
+
+
+    // Agrupar datos por Cliente y SKU y consolidar por período y figura clave
+    const groupedData = allData.reduce((acc, item) => {
+        const clientKey = item.client_id;
+        const skuKey = item.sku_id;
+        const clientFinalKey = item.client_final_id;
+        const groupKey = `${clientKey}-${skuKey}-${clientFinalKey}`;
+
+        if (!acc[groupKey]) {
+            acc[groupKey] = {
+                id: groupKey, // ID único para la fila
+                clientId: clientKey,
+                skuId: skuKey,
+                clientFinalId: clientFinalKey,
+                clientName: item.clientName || item.client?.client_name || 'N/A',
+                skuName: item.skuName || item.sku?.sku_name || 'N/A',
+            };
+        }
+
+        const periodDate = new Date(item.period);
+        const periodIso = periodDate.toISOString().split('T')[0]; //YYYY-MM-DD
+        uniquePeriods.add(periodIso);
+        uniqueKeyFigureNames.add(item.kf_name);
+
+        // Lógica de visualización condicional: Mostrar solo las cifras clave apropiadas para el período
+        const isHistoricalPeriod = forecastStartDate ? periodDate < forecastStartDate : true;
+        const isForecastPeriod = forecastStartDate ? periodDate >= forecastStartDate : false;
+
+        let valueToDisplay = undefined;
+
+        switch (item.kf_id) {
+            case KF_SALES_ID:
+            case KF_ORDER_ID:
+            case KF_SHIPMENTS_ID:
+                if (isHistoricalPeriod) {
+                    valueToDisplay = item.value;
+                }
+                break;
+            case KF_CLEAN_HISTORY_ID:
+                if (isHistoricalPeriod) {
+                    valueToDisplay = item.value;
+                }
+                break;
+            case KF_STATISTICAL_FORECAST_ID:
+            case KF_FINAL_FORECAST_ID:
+                if (isForecastPeriod) {
+                    valueToDisplay = item.value;
+                }
+                break;
+            default:
+                valueToDisplay = item.value; // Por si acaso hay otros kf_id
+                break;
+        }
+
+
+        const colIdPrefix = `${periodIso}_`;
+        const colId = `${colIdPrefix}${item.kf_name}`;
+
+        acc[groupKey][colId] = valueToDisplay;
+
+        const commentCellId = `${clientKey}-${skuKey}-${periodIso}-${item.kf_id}`;
+        const commentIconColId = `${colId}_hasComment`;
+        if (commentsMap[commentCellId]) {
+            acc[groupKey][commentIconColId] = true;
+        }
+
+        return acc;
+    }, {});
+
+    const processedRowData = Object.values(groupedData).sort((a, b) => {
+        if (a.clientName !== b.clientName) return a.clientName.localeCompare(b.clientName);
+        if (a.skuName !== b.skuName) return a.skuName.localeCompare(b.skuName);
+        return 0;
+    });
+
+    // Generar Column Definitions dinámicas
+    const initialColumnDefs = [
+      { 
+          headerName: 'Cliente', 
+          field: 'clientName', 
+          minWidth: 150, 
+          filter: true, 
+          sortable: true, 
+          pinned: 'left',
+          suppressMovable: true, 
+          editable: false 
+      },
+      { 
+          headerName: 'SKU', 
+          field: 'skuName', 
+          minWidth: 150, 
+          filter: true, 
+          sortable: true, 
+          pinned: 'left',
+          suppressMovable: true, 
+          editable: false 
+      },
+    ];
+
+    const sortedPeriods = Array.from(uniquePeriods).sort();
+    const sortedKeyFigureNames = Array.from(uniqueKeyFigureNames).sort((a, b) => {
+        const order = { 'Sales': 1, 'Order': 2, 'Shipments': 3, 'Historia Limpia': 4, 'Pronóstico Estadístico': 5, 'Pronóstico Final': 6 };
+        return (order[a] || 99) - (order[b] || 99);
+    });
+
+    const dynamicPeriodColumns = sortedPeriods.map(periodIso => {
+        const periodDate = new Date(periodIso);
+        const headerPeriodName = periodDate.toLocaleDateString('es-AR', { month: 'short', year: 'numeric' });
+
+        // Filtrar KeyFigures a mostrar para este período
+        const children = sortedKeyFigureNames
+            .filter(kfName => {
+                const isHistoricalKf = [keyFigures.find(k => k.key_figure_id === KF_SALES_ID)?.name, 
+                                        keyFigures.find(k => k.key_figure_id === KF_ORDER_ID)?.name,
+                                        keyFigures.find(k => k.key_figure_id === KF_SHIPMENTS_ID)?.name,
+                                        keyFigures.find(k => k.key_figure_id === KF_CLEAN_HISTORY_ID)?.name].includes(kfName);
+                const isForecastKf = [keyFigures.find(k => k.key_figure_id === KF_STATISTICAL_FORECAST_ID)?.name, 
+                                      keyFigures.find(k => k.key_figure_id === KF_FINAL_FORECAST_ID)?.name].includes(kfName);
+
+                const isHistoricalPeriod = forecastStartDate ? periodDate < forecastStartDate : true;
+                const isForecastPeriod = forecastStartDate ? periodDate >= forecastStartDate : false;
+
+                // Si no hay forecastStartDate, todo es histórico
+                if (!forecastStartDate) {
+                    return isHistoricalKf; // Solo mostrar las históricas
+                }
+                
+                // Mostrar solo la figura clave si su tipo de período coincide con el período actual
+                return (isHistoricalPeriod && isHistoricalKf) || (isForecastPeriod && isForecastKf);
+            })
+            .map(kfName => {
+                const colId = `${periodIso}_${kfName}`;
+                const keyFigure = keyFigures.find(k => k.name === kfName);
+                const isEditable = keyFigure ? keyFigure.editable : false;
+                
+                return {
+                    headerName: kfName,
+                    field: colId,
+                    colId: colId, // Asegúrate de que colId se asigna explícitamente
+                    minWidth: 100,
+                    editable: isEditable && (kfName === 'Pronóstico Estadístico' || kfName === 'Pronóstico Final'), 
+                    type: 'numericColumn',
+                    valueParser: params => Number(params.newValue),
+                    cellClassRules: {
+                        'rag-red': params => params.value < 0,
+                        'has-comments': params => params.data[`${colId}_hasComment`], 
+                    },
+                    cellRenderer: (params) => {
+                        const value = params.value;
+                        const hasComments = params.data[`${colId}_hasComment`];
+                        return (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                                <span>{value !== undefined && value !== null ? value.toLocaleString('es-AR') : ''}</span>
+                                {hasComments && <span title="Esta celda tiene comentarios" style={{ marginLeft: '5px', cursor: 'pointer' }}>💬</span>}
+                            </div>
+                        );
+                    },
+                    cellRendererParams: {
+                        keyFigureId: keyFigure ? keyFigure.key_figure_id : null,
+                        keyFigureName: kfName,
+                        period: periodDate,
+                    }
+                };
+            });
+
+        // Solo crear el grupo de columnas si tiene hijos (es decir, alguna figura clave se mostrará para ese mes)
+        if (children.length > 0) {
+            return {
+                headerName: headerPeriodName,
+                groupId: periodIso,
+                children: children,
+                marryChildren: true,
+            };
+        }
+        return null; // No devolver el grupo si no tiene hijos
+    }).filter(group => group !== null); // Filtrar grupos nulos
+
+
+    const finalColumnDefs = [...initialColumnDefs, ...dynamicPeriodColumns];
+
+    return { processedRowData, dynamicColumnDefs: finalColumnDefs };
+
+  }, [historyData, forecastStatData, cleanHistoryData, finalForecastData, keyFigures, commentsForSelectedCell, forecastStartDate]);
+
+
+  // Manejadores de cambios en filtros (useCallback)
+  const handleKeyFigureChange = useCallback((event) => {
+    const { value, checked } = event.target;
+    setSelectedKeyFigures(prev => {
+        const currentSelection = prev || [];
+        const newSelection = checked ? [...currentSelection, value] : currentSelection.filter(kfId => kfId !== value);
+        return newSelection.length > 0 ? newSelection : null;
+    });
+  }, []);
+
+  const handleSourceChange = useCallback((event) => {
+    const { value, checked } = event.target;
+    setSelectedSources(prev => {
+        const currentSelection = prev || [];
+        const newSelection = checked ? [...currentSelection, value] : currentSelection.filter(source => source !== value);
+        return newSelection; 
+    });
+  }, []);
+
   // --- EFECTOS (useEffect va DESPUÉS de todas las declaraciones de estados y callbacks/memo) ---
+  // useEffect para cargar dimensiones iniciales (clientes, keyFigures, adjustmentTypes)
   useEffect(() => {
     const loadDimensions = async () => {
       try {
-        const [clientsData, skusData, keyFiguresData, adjustmentTypesData] = await Promise.all([
+        const [clientsData, keyFiguresData, adjustmentTypesData] = await Promise.all([
           fetchClients(),
-          fetchSkus(),
           fetchKeyFigures(),
           fetchAdjustmentTypes(),
         ]);
         setClients(clientsData);
-        setSkus(skusData);
         setKeyFigures(keyFiguresData);
         setAdjustmentTypes(adjustmentTypesData);
       } catch (e) {
@@ -602,6 +732,25 @@ function SalesForecastData() {
     };
     loadDimensions();
   }, []);
+
+  // useEffect para filtrar SKUs CUANDO CAMBIA EL CLIENTE
+  useEffect(() => {
+    const loadSkus = async () => {
+      try {
+        let skusData;
+        if (selectedClient) {
+          skusData = await fetchSkus(selectedClient);
+        } else {
+          skusData = await fetchSkus();
+        }
+        setSkus(skusData);
+      } catch (e) {
+        console.error("Error al cargar SKUs:", e);
+        setErrorData("Error al cargar SKUs: " + e.message);
+      }
+    };
+    loadSkus();
+  }, [selectedClient]);
 
   // --- Renderizado Principal del Componente ---
   return (
@@ -714,11 +863,12 @@ function SalesForecastData() {
       <SalesChart
         historyData={historyData}
         forecastStatData={forecastStatData}
-        cleanHistoryData={cleanHistoryData} // Pasar nueva data
-        finalForecastData={finalForecastData} // Pasar nueva data
+        cleanHistoryData={cleanHistoryData}
+        finalForecastData={finalForecastData}
         keyFigures={keyFigures}
         selectedKeyFigures={selectedKeyFigures}
         selectedSources={selectedSources}
+        forecastStartDate={forecastStartDate}
       />
 
 
@@ -727,17 +877,19 @@ function SalesForecastData() {
       <DataTableRenderer
         loading={loadingData}
         error={errorData}
-        rowData={rowData}
-        columnDefs={memoizedColumnDefs}
+        rowData={processedRowData}
+        columnDefs={dynamicColumnDefs}
         onGridReady={onGridReady}
         onCellValueChanged={onCellValueChanged}
         defaultColDef={useMemo(() => ({
           flex: 1,
           minWidth: 100,
           resizable: true,
+          filter: true,
+          sortable: true,
         }), [])}
         gridRef={gridRef}
-        getContextMenuItems={getContextMenuItems} // Pasar la función del menú contextual
+        getContextMenuItems={getContextMenuItems}
       />
 
       {/* Modal de Comentarios */}

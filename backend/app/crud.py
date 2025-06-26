@@ -1,14 +1,18 @@
-# backend/app/crud.py - Versión ACTUALIZADA para manejar UPSERT de ajustes,
-#                       nuevas funciones de fetch para cálculos y CRUD de comentarios.
-#                       CORREGIDO: Uso de 'created_at' en lugar de 'timestamp' para ManualInputComment
+# backend/app/crud.py - Versión ACTUALIZADA con UPSERT de forecast_stat
+#                       y CORRECCIÓN de distinct() para obtener SKUs por cliente.
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from sqlalchemy import func, distinct # Importar distinct
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime
 import uuid
+import psycopg2.extras # Importar extras para execute_values
 
 from . import models, schemas
+
+# Helper function to get raw connection from SQLAlchemy session
+def get_raw_connection(db: Session):
+    return db.connection().connection
 
 # --- Operaciones CRUD para DimClients, DimSkus, DimKeyFigures ---
 
@@ -36,6 +40,13 @@ def get_sku(db: Session, sku_id: uuid.UUID):
 
 def get_skus(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.DimSku).offset(skip).limit(limit).all()
+
+# Nueva función para obtener SKUs filtrados por cliente
+def get_skus_by_client(db: Session, client_id: uuid.UUID, skip: int = 0, limit: int = 100) -> List[models.DimSku]:
+    # CORREGIDO: Usar .distinct() en el objeto Query para obtener objetos DimSku distintos
+    return db.query(models.DimSku).distinct().join(models.FactHistory, models.DimSku.sku_id == models.FactHistory.sku_id).filter(
+        models.FactHistory.client_id == client_id
+    ).offset(skip).limit(limit).all()
 
 def create_sku(db: Session, sku: schemas.DimSkuCreate):
     db_sku = models.DimSku(sku_name=sku.sku_name)
@@ -148,9 +159,8 @@ def get_fact_history_for_calculation(
     sku_id: uuid.UUID,
     start_period: date,
     end_period: date,
-    source: str = 'sales' # Asumimos 'sales' como fuente principal para historia cruda
+    source: str = 'sales'
 ) -> List[models.FactHistory]:
-    # Siempre cargar relaciones para facilitar el uso en el engine
     return db.query(models.FactHistory).options(
         joinedload(models.FactHistory.client),
         joinedload(models.FactHistory.sku)
@@ -160,7 +170,6 @@ def get_fact_history_for_calculation(
         models.FactHistory.period >= start_period,
         models.FactHistory.period <= end_period,
         models.FactHistory.source == source,
-        # Asumiendo key_figure_id 1 es 'Sales' para historia cruda
         models.FactHistory.key_figure_id == 1
     ).order_by(models.FactHistory.period).all()
 
@@ -303,13 +312,52 @@ def get_fact_forecast_stat_data(
     return query.offset(skip).limit(limit).all()
 
 def create_fact_forecast_stat_batch(db: Session, forecast_records: List[Dict[str, Any]]):
-    db.bulk_insert_mappings(models.FactForecastStat, forecast_records)
-    db.commit()
+    """
+    Inserta o actualiza un lote de registros de pronóstico estadístico.
+    Utiliza ON CONFLICT DO UPDATE para manejar duplicados.
+    """
+    if not forecast_records:
+        return 0
+
+    conn = get_raw_connection(db)
+    cursor = conn.cursor()
+
+    query = """
+        INSERT INTO fact_forecast_stat (client_id, sku_id, client_final_id, period, value, model_used, forecast_run_id, user_id)
+        VALUES %s
+        ON CONFLICT (client_id, sku_id, client_final_id, period) DO UPDATE
+        SET
+            value = EXCLUDED.value,
+            model_used = EXCLUDED.model_used,
+            forecast_run_id = EXCLUDED.forecast_run_id,
+            created_at = CURRENT_TIMESTAMP,
+            user_id = EXCLUDED.user_id;
+    """
+
+    values_to_insert = [
+        (r['client_id'], r['sku_id'], r['client_final_id'], r['period'], r['value'],
+         r['model_used'], r['forecast_run_id'], r['user_id'])
+        for r in forecast_records
+    ]
+
+    try:
+        psycopg2.extras.execute_values(
+            cursor,
+            query,
+            values_to_insert
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        cursor.close()
+
     return len(forecast_records)
 
 
 # --- Operaciones CRUD para FactAdjustments (¡Importante!) ---
-def get_fact_adjustments( # Ya existía, se usa para el upsert
+def get_fact_adjustments(
     db: Session,
     client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date,
     key_figure_id: int, adjustment_type_id: int
@@ -361,8 +409,8 @@ def get_fact_adjustments_for_calculation(
     sku_id: uuid.UUID,
     start_period: date,
     end_period: date,
-    key_figure_id: Optional[int] = None, # Para filtrar ajustes por figura clave aplicada
-    adjustment_type_ids: Optional[List[int]] = None # Para filtrar por tipo de ajuste (Override, Clean, etc.)
+    key_figure_id: Optional[int] = None,
+    adjustment_type_ids: Optional[List[int]] = None
 ) -> List[models.FactAdjustments]:
     query = db.query(models.FactAdjustments).filter(
         models.FactAdjustments.client_id == client_id,
@@ -390,20 +438,19 @@ def update_fact_adjustment(
     period: date,
     key_figure_id: int,
     adjustment_type_id: int,
-    adjustment_update: schemas.FactAdjustmentsBase # Usar FactAdjustmentsBase para los campos a actualizar
+    adjustment_update: schemas.FactAdjustmentsBase
 ):
     db_adjustment = get_fact_adjustments(db, client_id, sku_id, client_final_id, period, key_figure_id, adjustment_type_id)
     if db_adjustment:
         for key, value in adjustment_update.model_dump(exclude_unset=True).items():
             setattr(db_adjustment, key, value)
-        db_adjustment.updated_at = func.now() # Actualizar timestamp
+        db_adjustment.updated_at = func.now()
         db.commit()
         db.refresh(db_adjustment)
     return db_adjustment
 
 
 def upsert_fact_adjustment(db: Session, adjustment: schemas.FactAdjustmentsCreate):
-    # Intentar encontrar un ajuste existente
     existing_adjustment = get_fact_adjustments(
         db,
         client_id=adjustment.client_id,
@@ -415,7 +462,6 @@ def upsert_fact_adjustment(db: Session, adjustment: schemas.FactAdjustmentsCreat
     )
 
     if existing_adjustment:
-        # Si existe, actualizarlo
         updated_adjustment = update_fact_adjustment(
             db,
             client_id=adjustment.client_id,
@@ -424,11 +470,10 @@ def upsert_fact_adjustment(db: Session, adjustment: schemas.FactAdjustmentsCreat
             period=adjustment.period,
             key_figure_id=adjustment.key_figure_id,
             adjustment_type_id=adjustment.adjustment_type_id,
-            adjustment_update=adjustment # Pasamos el esquema completo para la actualización
+            adjustment_update=adjustment
         )
         return updated_adjustment
     else:
-        # Si no existe, crearlo
         db_adjustment = models.FactAdjustments(
             client_id=adjustment.client_id,
             sku_id=adjustment.sku_id,
@@ -494,7 +539,7 @@ def get_fact_forecast_versioned_data(
     return query.offset(skip).limit(limit).all()
 
 # --- Operaciones CRUD para ManualInputComments (Básicas GET y CREATE) ---
-def get_manual_input_comment( # Ya existía
+def get_manual_input_comment(
     db: Session,
     client_id: uuid.UUID, sku_id: uuid.UUID, client_final_id: uuid.UUID, period: date, key_figure_id: int
 ):
@@ -506,7 +551,7 @@ def get_manual_input_comment( # Ya existía
         models.ManualInputComment.key_figure_id == key_figure_id
     ).first()
 
-def get_manual_input_comment_data( # Ya existía
+def get_manual_input_comment_data(
     db: Session,
     client_ids: Optional[List[uuid.UUID]] = None,
     sku_ids: Optional[List[uuid.UUID]] = None,
@@ -531,10 +576,9 @@ def get_manual_input_comment_data( # Ya existía
         query = query.filter(models.ManualInputComment.period <= end_period)
     if key_figure_ids:
         query = query.filter(models.ManualInputComment.key_figure_id.in_(key_figure_ids))
-    return query.order_by(models.ManualInputComment.created_at.desc()).offset(skip).limit(limit).all() # CORREGIDO: Usar created_at
+    return query.order_by(models.ManualInputComment.created_at.desc()).offset(skip).limit(limit).all()
 
 
-# Nueva función para crear un comentario
 def create_manual_input_comment(db: Session, comment: schemas.ManualInputCommentCreate):
     db_comment = models.ManualInputComment(
         client_id=comment.client_id,

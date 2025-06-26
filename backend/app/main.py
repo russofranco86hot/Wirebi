@@ -1,4 +1,4 @@
-# Wirebi/backend/app/main.py
+# backend/app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware # Importar CORSMiddleware
 
@@ -13,8 +13,10 @@ app = FastAPI(
 # Configuración de CORS
 origins = [
     "http://localhost",
-    "http://localhost:5173",  # Agrega el origen de tu frontend (Vite por defecto)
-    # Puedes añadir otros orígenes aquí si tu frontend se aloja en otro lugar
+    "http://localhost:5173",  # Origen común de Vite
+    "http://127.0.0.1",       # Otra forma común de acceder a localhost
+    "http://127.0.0.1:5173",  # Origen común de Vite con 127.0.0.1
+    # Puedes añadir otros orígenes aquí si tu frontend se aloja en un dominio diferente
 ]
 
 app.add_middleware(

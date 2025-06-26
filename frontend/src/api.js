@@ -1,12 +1,10 @@
 // frontend/src/api.js - Versión actualizada con endpoints de Historia Limpia, Pronóstico Final y Comentarios
-//                       INCLUYE MEJORA TEMPORAL DE MANEJO DE ERRORES PARA DEBUGGING 422
+//                       INCLUYE FILTRADO DE SKUs POR CLIENTE
 
 const API_BASE_URL = 'http://localhost:8000'; // Ajusta esto si tu backend se ejecuta en otra URL
 
 async function handleApiResponse(response) {
     if (!response.ok) {
-        // Intenta parsear la respuesta JSON del error.
-        // Si no es JSON o hay otro problema, lo maneja.
         let errorData;
         try {
             errorData = await response.json();
@@ -14,19 +12,17 @@ async function handleApiResponse(response) {
             errorData = { detail: `No JSON response or parsing error, status: ${response.status}. Text: ${await response.text()}` };
         }
         
-        console.error("API Error Response (raw):", errorData); // <-- MUY IMPORTANTE: REGISTRA LA RESPUESTA COMPLETA DEL ERROR
+        console.error("API Error Response (raw):", errorData);
 
         let errorMessage = `HTTP error! status: ${response.status}`;
 
         if (errorData.detail) {
             if (Array.isArray(errorData.detail)) {
-                // Si 'detail' es un array (típico de errores 422 de FastAPI)
                 errorMessage = "Errores de validación:\n" + errorData.detail.map(err => {
                     const loc = err.loc ? err.loc.join('.') : 'unknown';
                     return `Campo: ${loc}, Mensaje: ${err.msg} (Tipo: ${err.type})`;
                 }).join('\n');
             } else {
-                // Si 'detail' es un string
                 errorMessage = errorData.detail;
             }
         } else if (response.statusText) {
@@ -44,9 +40,13 @@ export async function fetchClients() {
     return handleApiResponse(response);
 }
 
-// --- SKUs ---
-export async function fetchSkus() {
-    const response = await fetch(`${API_BASE_URL}/skus/`);
+// --- SKUs (Modificado para aceptar clientId) ---
+export async function fetchSkus(clientId = null) {
+    const params = new URLSearchParams();
+    if (clientId) {
+        params.append('client_id', clientId);
+    }
+    const response = await fetch(`${API_BASE_URL}/skus/?${params.toString()}`);
     return handleApiResponse(response);
 }
 
@@ -116,7 +116,6 @@ export async function generateForecast(forecastParams) {
         headers: {
             'Content-Type': 'application/json',
         },
-        // No body needed for POST with query parameters
     });
     return handleApiResponse(response);
 }
@@ -125,7 +124,7 @@ export async function generateForecast(forecastParams) {
 export async function sendManualAdjustment(adjustmentPayload) {
     console.log("Sending adjustment to URL: ", `${API_BASE_URL}/data/adjustments/`, "with data:", adjustmentPayload);
     const response = await fetch(`${API_BASE_URL}/data/adjustments/`, {
-        method: 'POST', // Usamos POST para el upsert
+        method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
@@ -137,7 +136,6 @@ export async function sendManualAdjustment(adjustmentPayload) {
 // --- NUEVAS FUNCIONES PARA HISTORIA LIMPIA Y PRONÓSTICO FINAL ---
 export async function fetchCleanHistoryData(filterParams = {}) {
     const params = new URLSearchParams();
-    // client_id, sku_id, client_final_id, start_period, end_period son requeridos por el endpoint
     if (filterParams.clientId) params.append('client_id', filterParams.clientId);
     if (filterParams.skuId) params.append('sku_id', filterParams.skuId);
     if (filterParams.clientFinalId) params.append('client_final_id', filterParams.clientFinalId);
@@ -151,7 +149,6 @@ export async function fetchCleanHistoryData(filterParams = {}) {
 
 export async function fetchFinalForecastData(filterParams = {}) {
     const params = new URLSearchParams();
-    // client_id, sku_id, client_final_id, start_period, end_period son requeridos por el endpoint
     if (filterParams.clientId) params.append('client_id', filterParams.clientId);
     if (filterParams.skuId) params.append('sku_id', filterParams.skuId);
     if (filterParams.clientFinalId) params.append('client_final_id', filterParams.clientFinalId);
