@@ -3,15 +3,22 @@ D:\Descargas\Tincho\Wirebi-russofranco86hot\Wirebi\WireBI_db.bat
 
 Ir a Visual code, y dar permisos parar correr scripts:
 1) Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-2) Ir al path donde esta el backend, por ejemplo:
- 
-cd D:\Descargas\Tincho\Wirebi-russofranco86hot\Wirebi\backend
 
-2) Activarlo:
+2) Ir al path donde esta el backend, por ejemplo: cd .\backend
+
+3) Borrar el ambiente de Backend:
+
+Remove-Item -Recurse -Force .venv_backend
+
+4) Instalar el ambiente:
+
+pip install -r requirements.txt
+
+5) Activarlo:
 
 .venv_backend\Scripts\activate
 
-3) 
+6) 
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 
@@ -19,7 +26,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Para REACT:
 
-(borrar todo instalado segun package y reinstalar)
+(borrar todo instalado segun package.json y reinstalar)
+
+cd ./frontend
 Remove-Item -Recurse -Force node_modules
 Remove-Item package-lock.json
 npm install 
