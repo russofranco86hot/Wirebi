@@ -131,6 +131,7 @@ function SalesForecastData() {
   const [selectedSku, setSelectedSku] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+
   const [selectedKeyFigures, setSelectedKeyFigures] = useState(null);
   const [selectedSources, setSelectedSources] = useState([]);
 
@@ -163,7 +164,7 @@ function SalesForecastData() {
         clientIds: selectedClient ? [selectedClient] : null,
         skuIds: selectedSku ? [selectedSku] : null,
         startPeriod: startDate || null,
-        endPeriod: endDate || null,
+        endPeriod: endDate || null, // Se usará el endDate actualizado por handleGenerateForecast o el del filtro
         keyFigureIds: selectedKeyFigures,
         sources: selectedSources,
         clientId: selectedClient || null,
@@ -206,6 +207,14 @@ function SalesForecastData() {
       } else {
         setForecastStartDate(null); // Si no hay pronóstico, no hay fecha de inicio de pronóstico
       }
+
+      console.log("DEBUG: handleSearch - Fetched Historical Data Count:", historical.length); // Log de depuración
+      console.log("DEBUG: handleSearch - Fetched Forecast Stat Data Count:", forecastStat.length); // Log de depuración
+      if (forecastStat.length > 0) {
+        console.log("DEBUG: handleSearch - First Forecast Stat Period:", forecastStat[0].period); // Log de depuración
+        console.log("DEBUG: handleSearch - Last Forecast Stat Period:", forecastStat[forecastStat.length - 1].period); // Log de depuración
+      }
+      console.log("DEBUG: handleSearch - Forecast Start Date Set To:", forecastStartDate ? forecastStartDate.toISOString().split('T')[0] : 'null'); // Log de depuración
 
 
     } catch (e) {
@@ -271,6 +280,29 @@ function SalesForecastData() {
             forecastHorizon: forecastHorizonInt,
         });
         setForecastGenerationMessage(result.message);
+
+        // --- INICIO: Lógica para extender el endDate del filtro ---
+        // Obtener la fecha del último dato histórico cargado.
+        let latestHistoricalPeriod = new Date(startDate); // Valor por defecto si no hay datos históricos
+        if (historyData && historyData.length > 0) {
+            latestHistoricalPeriod = historyData.reduce((latest, p) =>
+                new Date(p.period) > new Date(latest.period) ? p : latest, historyData[0]
+            ).period;
+            latestHistoricalPeriod = new Date(latestHistoricalPeriod);
+        }
+        
+        // Calcular la fecha final de la visualización (último mes del pronóstico)
+        // Partimos del último mes histórico + el horizonte de pronóstico
+        const lastForecastMonthDate = new Date(latestHistoricalPeriod);
+        lastForecastMonthDate.setMonth(latestHistoricalPeriod.getMonth() + forecastHorizonInt);
+        // Para asegurar que sea el último día del mes, vamos al siguiente mes y restamos 1 día.
+        const finalFetchEndDate = new Date(lastForecastMonthDate.getFullYear(), lastForecastMonthDate.getMonth() + 1, 0);
+
+        console.log("DEBUG: handleGenerateForecast - Calculated finalFetchEndDate:", finalFetchEndDate.toISOString().split('T')[0]); // Log de depuración
+        // Actualizar el estado endDate del filtro. Esto provocará que handleSearch use este nuevo rango.
+        setEndDate(finalFetchEndDate.toISOString().split('T')[0]);
+        // --- FIN: Lógica para extender el endDate del filtro ---
+
         await handleSearch(); // Recargar datos para ver el nuevo pronóstico y las figuras calculadas
     }
     catch (e) {
@@ -278,7 +310,7 @@ function SalesForecastData() {
     } finally {
         setGeneratingForecast(false);
     }
-  }, [selectedClient, selectedSku, selectedSources, forecastAlpha, forecastModel, forecastHorizon, handleSearch]);
+  }, [selectedClient, selectedSku, selectedSources, forecastAlpha, forecastModel, forecastHorizon, handleSearch, startDate, historyData, setEndDate]); // Añadido setEndDate a las dependencias
 
 
   // Callbacks para AG Grid: Lógica de edición
@@ -371,13 +403,15 @@ function SalesForecastData() {
       }
       // --- FIN: Actualización de estado local para feedback inmediato ---
       
-      // Removed handleSearch() here to test immediate visual update.
-      // User must click "Buscar Datos" to persist changes and update calculations.
+      // La recarga completa asegura la consistencia de los datos desde el backend,
+      // incluyendo cualquier cálculo que dependa de los ajustes.
+      // Se ejecuta DESPUÉS de la actualización local.
+      // handleSearch(); // Comentado para depurar la persistencia visual. No descomentar.
       
     } catch (e) {
       console.error("Error al guardar el ajuste manual:", e);
     }
-  }, [adjustmentTypes, keyFigures, forecastStatData, finalForecastData]); // Removed handleSearch from dependencies as it's not called
+  }, [adjustmentTypes, keyFigures, forecastStatData, finalForecastData]);
 
 
   const onGridReady = useCallback((params) => {

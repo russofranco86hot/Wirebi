@@ -1,6 +1,8 @@
 # backend/app/forecast_engine.py - Versión con soporte para 'shipments',
 #                                  cálculo de Historia Limpia y Pronóstico Final
 #                                  MEJORADO: Logs de depuración, manejo de errores, NaN y client_final_id
+#                                  AÑADIDO: Log de shape de forecast_df
+#                                  CORREGIDO: FutureWarning de inplace=True
 
 import pandas as pd
 from statsforecast import StatsForecast
@@ -68,7 +70,7 @@ def generate_forecast(
     Genera un pronóstico estadístico para un SKU y Cliente dados,
     utilizando la historia de ventas, pedidos o envíos como base.
     """
-    logger.info(f"Iniciando generación de pronóstico para Cliente {client_id}, SKU {sku_id} con fuente {history_source}, modelo {model_name}.")
+    logger.info(f"Iniciando generación de pronóstico para Cliente {client_id}, SKU {sku_id} con fuente {history_source}, modelo {model_name} y horizonte {forecast_horizon} meses.")
 
     # Paso 1: Obtener la figura clave ID de la fuente histórica
     source_key_figure_map = {
@@ -104,10 +106,10 @@ def generate_forecast(
         history_df['y'] = pd.to_numeric(history_df['y'])
 
         # Rellenar NaNs en la columna 'y' (valor) con 0 para evitar problemas en StatsForecast
-        history_df['y'].fillna(0, inplace=True)
+        history_df['y'] = history_df['y'].fillna(0) # CORREGIDO: Eliminado inplace=True para FutureWarning
 
-        logger.info(f"History DataFrame antes del pronóstico (head):\n{history_df.head().to_string()}") # DEBUG LOG
-        logger.info(f"History DataFrame info:\n{history_df.info()}") # DEBUG LOG
+        logger.info(f"History DataFrame antes del pronóstico (head):\n{history_df.head().to_string()}")
+        logger.info(f"History DataFrame info:\n{history_df.info()}")
 
         if history_df.empty or len(history_df) < MIN_FORECAST_POINTS:
             raise RuntimeError(f"Conjunto de datos demasiado pequeño ({len(history_df)} puntos). Se requieren al menos {MIN_FORECAST_POINTS} puntos para generar el pronóstico.")
@@ -115,7 +117,6 @@ def generate_forecast(
         # Advertencia si los datos son constantes o tienen muy poca variabilidad
         if history_df['y'].nunique() <= 1:
              logger.warning(f"ADVERTENCIA: Los datos históricos para Cliente {client_id}, SKU {sku_id} son constantes o tienen muy poca variabilidad para el modelo {model_name}. Datos: {history_df['y'].tolist()}")
-             # Podrías optar por levantar una excepción más específica aquí si no quieres pronosticar datos constantes.
 
         # Solo necesitamos un unique_id para StatsForecast para este caso de un solo par Client-SKU
         history_df['unique_id'] = f"{client_id}-{sku_id}"
@@ -129,38 +130,33 @@ def generate_forecast(
         )
 
         sf.fit(history_df)
-        forecast_df = sf.predict(h=forecast_horizon)
+        forecast_df = sf.predict(h=forecast_horizon) # Aquí se solicita el horizonte
 
-        logger.info(f"Forecast DataFrame después de la predicción (head):\n{forecast_df.head().to_string()}") # DEBUG LOG
-        logger.info(f"Forecast DataFrame columnas: {forecast_df.columns.tolist()}") # DEBUG LOG
+        logger.info(f"Forecast DataFrame después de la predicción (head):\n{forecast_df.head().to_string()}")
+        logger.info(f"Forecast DataFrame columnas: {forecast_df.columns.tolist()}")
+        logger.info(f"Forecast DataFrame Shape (filas, columnas): {forecast_df.shape}") # NUEVO LOG CLAVE
 
         forecast_records = []
-        new_forecast_run_id = uuid.uuid4() # Nuevo ID de ejecución para este pronóstico
+        new_forecast_run_id = uuid.uuid4()
 
-        # Crear un registro en forecast_smoothing_parameters
         crud.create_forecast_smoothing_parameter(
             db=db,
             forecast_run_id=new_forecast_run_id,
             client_id=client_id,
-            alpha=smoothing_alpha, # Guardamos el alpha usado
+            alpha=smoothing_alpha,
             user_id=DEFAULT_USER_ID
         )
 
         for _, row in forecast_df.iterrows():
-            model_output_column = model_name.lower() # Nombre de la columna de salida de StatsForecast (ej. 'ets' para ETS)
+            model_output_column = model_name.lower()
             
-            # Ajuste de nombre de columna: StatsForecast a veces usa el nombre del modelo en minúsculas,
-            # pero ARIMA puede resultar en 'arimafc' o similar.
-            # Verificamos si la columna esperada existe o si hay una similar.
             actual_output_column = None
             if model_output_column in row:
                 actual_output_column = model_output_column
             else:
-                # Intenta encontrar una columna que empiece con el nombre del modelo
-                # Esto es más flexible por si StatsForecast cambia sus convenciones de nombres.
                 matching_cols = [col for col in forecast_df.columns if col.lower().startswith(model_output_column)]
                 if matching_cols:
-                    actual_output_column = matching_cols[0] # Toma la primera coincidencia
+                    actual_output_column = matching_cols[0]
                 
             if not actual_output_column:
                  logger.error(f"Error: La columna de salida esperada '{model_output_column}' no se encontró en el DataFrame de pronóstico. Columnas disponibles: {forecast_df.columns.tolist()}")
@@ -171,11 +167,9 @@ def generate_forecast(
             forecast_records.append({
                 'client_id': client_id,
                 'sku_id': sku_id,
-                # client_final_id: Se obtiene del primer elemento de raw_history_data_query si existe,
-                # de lo contrario, se busca el client_id en crud.get_client
                 'client_final_id': raw_history_data_query[0].client_final_id if raw_history_data_query and raw_history_data_query[0].client_final_id else crud.get_client(db, client_id).client_id,
-                'period': row['ds'].date(), # Convertir timestamp a date
-                'value': forecast_value, # El valor pronosticado
+                'period': row['ds'].date(),
+                'value': forecast_value,
                 'model_used': model_name,
                 'forecast_run_id': new_forecast_run_id,
                 'user_id': DEFAULT_USER_ID
@@ -186,13 +180,13 @@ def generate_forecast(
         logger.info(f"Pronóstico generado y guardado exitosamente para Cliente {client_id}, SKU {sku_id}.")
         return {"message": "Pronóstico generado y guardado exitosamente.", "forecast_run_id": str(new_forecast_run_id)}
 
-    except RuntimeError as e: # Catch specific runtime errors raised by me
+    except RuntimeError as e:
         logger.error(f"Error específico de ejecución del pronóstico: {e}")
         raise
-    except KeyError as e: # Catch KeyError específicamente para columnas faltantes en forecast_df
+    except KeyError as e:
         logger.error(f"KeyError al procesar el pronóstico: La columna '{e}' no se encontró en el pronóstico de StatsForecast. Esto indica un fallo en la generación del pronóstico por el modelo.", exc_info=True)
         raise RuntimeError(f"Error de procesamiento de pronóstico: La columna de salida del modelo '{e}' no se encontró. Verifica los datos históricos o el modelo de pronóstico.")
-    except Exception as e: # Catch all other unexpected errors
+    except Exception as e:
         logger.error(f"Error inesperado en la generación del pronóstico: {e}", exc_info=True)
         raise RuntimeError(f"Error interno al generar el pronóstico: {e}. Por favor, revisa los logs del servidor para más detalles del traceback.")
 
