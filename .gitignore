@@ -1,3 +1,9 @@
-ventas-pronostico-app/src/data/2025-06-19T18-28_export.csv
-ventas-pronostico-app/src/data/2025-06-19T18-29_export.csv
-ventas-pronostico-app/src/data/~$250604 DP Fresh Monster - Lite.xlsm
+# Ignorar entornos virtuales de Python
+.venv/
+.venv_backend/
+venv/
+node_modules/
+__pycache__/
+package-lock.json
+# Ignorar archivos de configuración de IDEs 
+*.pyc

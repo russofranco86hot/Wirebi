@@ -1,8 +1,10 @@
 -- Database: forecaist
 
--- DROP DATABASE IF EXISTS forecaist;
+CREATE USER fr94901 WITH PASSWORD 'Chaca1986!';
 
-/*CREATE DATABASE forecaist
+DROP DATABASE IF EXISTS forecaist;
+
+CREATE DATABASE forecaist
     WITH
     OWNER = fr94901
     ENCODING = 'UTF8'
@@ -12,7 +14,6 @@
     TABLESPACE = pg_default
     CONNECTION LIMIT = -1
     IS_TEMPLATE = False;
-*/
 
 DROP SCHEMA public CASCADE; -- Eliminar todo en el esquema público
 CREATE SCHEMA public;      -- Crear un esquema público nuevo
