@@ -1,9 +1,29 @@
-# backend/app/schemas.py - Versión corregida y completa para forecaist_schema.sql (con TIMESTAMP de FactHistory corregido)
+# backend/app/schemas.py
 
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any 
 from datetime import date, datetime
 import uuid
+
+# --- Constantes para Key Figures (¡AHORA DEFINITIVAS Y CANÓNICAS!)
+KEY_FIGURE_SALES_ID = 1
+KEY_FIGURE_SMOOTHED_SALES_ID = 2
+KEY_FIGURE_ORDERS_ID = 3
+KEY_FIGURE_SMOOTHED_ORDERS_ID = 4
+KEY_FIGURE_MANUAL_INPUT_ID = 5
+KEY_FIGURE_STAT_FORECAST_SALES_ID = 6
+KEY_FIGURE_STAT_FORECAST_ORDERS_ID = 7
+KEY_FIGURE_FINAL_FORECAST_ID = 8
+
+# No hay necesidad de IDs para ajuste por cantidad/porcentaje/override como Key Figures,
+# porque son tipos de ajuste que se aplican a las Key Figures principales.
+# KEY_FIGURE_OVERRIDE_ID = 10 (removido, Override es un tipo de ajuste sobre una KF existente)
+
+# --- Constantes para Adjustment Types (debe coincidir con los IDs de tu base de datos)
+ADJUSTMENT_TYPE_QTY_ID = 1
+ADJUSTMENT_TYPE_PCT_ID = 2
+ADJUSTMENT_TYPE_OVERRIDE_ID = 3
+
 
 # --- Esquemas para Tablas Dimensiones ---
 
@@ -69,17 +89,18 @@ class FactHistoryBase(BaseModel):
     sku_id: uuid.UUID
     client_final_id: uuid.UUID
     period: date
-    source: str # 'sales', 'order', 'shipments'
+    source: str 
     key_figure_id: int
     value: Optional[float] = None
+    user_id: Optional[uuid.UUID] = None
 
 class FactHistoryCreate(FactHistoryBase):
     pass
 
 class FactHistory(FactHistoryBase):
-    # 'timestamp' ha sido reemplazado por 'created_at' y 'updated_at' para coincidir con la DB y models.py
     created_at: datetime
-    updated_at: Optional[datetime] = None # updated_at puede ser nulo si el registro nunca se actualizó
+    updated_at: Optional[datetime] = None
+    user_id: Optional[uuid.UUID] = None
     client: Optional[DimClient] = None
     sku: Optional[DimSku] = None
     key_figure: Optional[DimKeyFigure] = None
@@ -104,22 +125,27 @@ class ForecastSmoothingParameter(ForecastSmoothingParameterBase):
         from_attributes = True
 
 
-class ForecastVersionBase(BaseModel):
+# --- ESQUEMAS PARA VERSIONADO (SNAPSHOTS) ---
+class ForecastVersionCreate(BaseModel):
     client_id: uuid.UUID
-    name: str
-    history_source: str
-    model_used: str
-    forecast_run_id: uuid.UUID # ID del run que generó esta versión
+    user_id: uuid.UUID
+    version_name: str
+    history_source_used: str
+    smoothing_parameter_used: Optional[float] = None
+    statistical_model_applied: Optional[str] = None
     notes: Optional[str] = None
 
-class ForecastVersionCreate(ForecastVersionBase):
-    pass
+class ForecastVersion(BaseModel):
+    version_id: uuid.UUID
+    client_id: uuid.UUID
+    user_id: uuid.UUID
+    version_name: str
+    history_source_used: str
+    smoothing_parameter_used: Optional[float] = None
+    statistical_model_applied: Optional[str] = None
+    creation_date: datetime
+    notes: Optional[str] = None
 
-class ForecastVersion(ForecastVersionBase):
-    version_id: uuid.UUID = Field(default_factory=uuid.uuid4)
-    created_at: datetime
-    created_by: uuid.UUID
-    
     class Config:
         from_attributes = True
 
@@ -132,16 +158,17 @@ class FactForecastStatBase(BaseModel):
     value: Optional[float] = None
     model_used: Optional[str] = None
     forecast_run_id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None
 
 class FactForecastStatCreate(FactForecastStatBase):
     pass
 
 class FactForecastStat(FactForecastStatBase):
     created_at: datetime
-    user_id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None
     client: DimClient
     sku: DimSku
-    forecast_run: Optional[ForecastSmoothingParameter] # Relación opcional
+    forecast_run: Optional[ForecastSmoothingParameter]
 
     class Config:
         from_attributes = True
@@ -161,7 +188,8 @@ class FactAdjustmentsCreate(FactAdjustmentsBase):
     pass
 
 class FactAdjustments(FactAdjustmentsBase):
-    timestamp: datetime # Este campo sí está en el modelo y la DB para ajustes
+    timestamp: datetime
+    user_id: Optional[uuid.UUID] = None
     client: DimClient
     sku: DimSku
     key_figure: DimKeyFigure
@@ -178,15 +206,17 @@ class FactForecastVersionedBase(BaseModel):
     period: date
     key_figure_id: int
     value: Optional[float] = None
+    user_id: Optional[uuid.UUID] = None
 
 class FactForecastVersionedCreate(FactForecastVersionedBase):
     pass
 
 class FactForecastVersioned(FactForecastVersionedBase):
-    version: Optional[ForecastVersion] # Relación a ForecastVersion
+    version: Optional[ForecastVersion]
     client: DimClient
     sku: DimSku
     key_figure: DimKeyFigure
+    user_id: Optional[uuid.UUID] = None
 
     class Config:
         from_attributes = True
@@ -208,35 +238,35 @@ class ManualInputComment(ManualInputCommentBase):
     client: DimClient
     sku: DimSku
     key_figure: DimKeyFigure
+    user_id: Optional[uuid.UUID] = None
 
     class Config:
         from_attributes = True
 
-# --- Nuevos esquemas para Historia Limpia y Pronóstico Final ---
-class CleanHistoryData(BaseModel):
+# Estos esquemas ahora representarán directamente las nuevas 8 Key Figures
+class CleanHistoryData(BaseModel): # Esto ahora se mapearía a "Manual input" (ID 5)
     client_id: uuid.UUID
     sku_id: uuid.UUID
     client_final_id: uuid.UUID
     period: date
     value: Optional[float] = None
-    # Puedes añadir más campos si los necesitas, como el nombre del cliente/sku para el frontend
     clientName: Optional[str] = None
     skuName: Optional[str] = None
-    keyFigureName: Optional[str] = "Historia Limpia" # Nombre fijo para este tipo de dato
+    # keyFigureName: Optional[str] = "Historia Limpia" # Remover si ya no existe
+
 
     class Config:
         from_attributes = True
 
-class FinalForecastData(BaseModel):
+class FinalForecastData(BaseModel): # Esto se mapearía a "Final Forecast" (ID 8)
     client_id: uuid.UUID
     sku_id: uuid.UUID
     client_final_id: uuid.UUID
     period: date
     value: Optional[float] = None
-    # Puedes añadir más campos si los necesitas
     clientName: Optional[str] = None
     skuName: Optional[str] = None
-    keyFigureName: Optional[str] = "Pronóstico Final" # Nombre fijo para este tipo de dato
+    # keyFigureName: Optional[str] = "Pronóstico Final" # Remover si ya no existe
 
     class Config:
         from_attributes = True

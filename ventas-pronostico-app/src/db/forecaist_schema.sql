@@ -114,11 +114,10 @@ CREATE TABLE IF NOT EXISTS fact_history (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP,
     user_id UUID,
-    PRIMARY KEY (client_id, sku_id, client_final_id, period, key_figure_id),
+    PRIMARY KEY (client_id, sku_id, client_final_id, period, key_figure_id, source),
     FOREIGN KEY (key_figure_id) REFERENCES dim_keyfigures(key_figure_id),
     FOREIGN KEY (client_id) REFERENCES dim_clients(client_id),
-    FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id),
-    UNIQUE (client_id, sku_id, client_final_id, period, key_figure_id, source)
+    FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id)
 );
 
 CREATE TABLE IF NOT EXISTS fact_forecast_stat (
@@ -131,10 +130,12 @@ CREATE TABLE IF NOT EXISTS fact_forecast_stat (
     forecast_run_id UUID,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     user_id UUID,
-    PRIMARY KEY (client_id, sku_id, client_final_id, period),
+    key_figure_id INT NOT NULL, -- <--- ¡AÑADIDA ESTA COLUMNA!
+    PRIMARY KEY (client_id, sku_id, client_final_id, period, key_figure_id), -- <--- ¡key_figure_id añadido a PK!
     FOREIGN KEY (forecast_run_id) REFERENCES forecast_smoothing_parameters(forecast_run_id),
-    FOREIGN KEY (client_id) REFERENCES dim_clients(client_id), -- New FK
-    FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id) -- New FK
+    FOREIGN KEY (client_id) REFERENCES dim_clients(client_id), 
+    FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id),
+    FOREIGN KEY (key_figure_id) REFERENCES dim_keyfigures(key_figure_id) -- <--- ¡Añadida FK!
 );
 
 CREATE TABLE IF NOT EXISTS fact_adjustments (
@@ -151,8 +152,8 @@ CREATE TABLE IF NOT EXISTS fact_adjustments (
     PRIMARY KEY (client_id, sku_id, client_final_id, period, key_figure_id),
     FOREIGN KEY (key_figure_id) REFERENCES dim_keyfigures(key_figure_id),
     FOREIGN KEY (adjustment_type_id) REFERENCES dim_adjustment_types(adjustment_type_id),
-    FOREIGN KEY (client_id) REFERENCES dim_clients(client_id), -- New FK
-    FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id) -- New FK
+    FOREIGN KEY (client_id) REFERENCES dim_clients(client_id), 
+    FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id) 
 );
 
 CREATE TABLE IF NOT EXISTS fact_forecast_versioned (
@@ -166,8 +167,8 @@ CREATE TABLE IF NOT EXISTS fact_forecast_versioned (
     PRIMARY KEY (version_id, client_id, sku_id, client_final_id, period, key_figure_id),
     FOREIGN KEY (version_id) REFERENCES forecast_versions(version_id),
     FOREIGN KEY (key_figure_id) REFERENCES dim_keyfigures(key_figure_id),
-    FOREIGN KEY (client_id) REFERENCES dim_clients(client_id), -- New FK
-    FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id) -- New FK
+    FOREIGN KEY (client_id) REFERENCES dim_clients(client_id), 
+    FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id) 
 );
 
 CREATE TABLE IF NOT EXISTS manual_input_comments (
@@ -181,7 +182,6 @@ CREATE TABLE IF NOT EXISTS manual_input_comments (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (client_id, sku_id, client_final_id, period, key_figure_id),
     FOREIGN KEY (key_figure_id) REFERENCES dim_keyfigures(key_figure_id),
-    FOREIGN KEY (client_id) REFERENCES dim_clients(client_id), -- New FK
-    FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id) -- New FK
+    FOREIGN KEY (client_id) REFERENCES dim_clients(client_id), 
+    FOREIGN KEY (sku_id) REFERENCES dim_skus(sku_id) 
 );
-

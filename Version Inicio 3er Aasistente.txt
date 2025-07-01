@@ -1,0 +1,91 @@
+[cite_start]Based on the project idea outlined in `Forecaist.pdf` [cite: 5] and the provided code, here's an overview of your project and what appears to be implemented:
+
+## Overview del Proyecto Forecaist
+
+Forecaist es una aplicación diseñada para la planificación de la demanda en empresas de consumo masivo (CPG). [cite_start]Sus funcionalidades principales incluyen la gestión del historial de ventas, la generación de pronósticos estadísticos, la aplicación de correcciones manuales y la comparación de versiones de pronósticos, todo ello con una interfaz ágil y colaborativa[cite: 5].
+
+El proyecto está estructurado en un backend (Python con FastAPI) y un frontend (React con Vite), además de una aplicación Streamlit que parece haber sido una versión inicial o alternativa. También se incluye una base de datos PostgreSQL con su esquema y scripts de migración, y un archivo CSV con datos históricos de ejemplo.
+
+### Componentes Identificados
+
+* **Backend (Python/FastAPI)**:
+    * [cite_start]Define modelos de datos para clientes, SKUs, figuras clave, tipos de ajuste, historial de ventas, pronósticos estadísticos y versiones de pronóstico[cite: 1, 17, 26, 30].
+    * [cite_start]Implementa operaciones CRUD (Crear, Leer, Actualizar, Eliminar) para estas entidades[cite: 1, 17, 25, 32, 33].
+    * [cite_start]Contiene lógica para la generación de pronósticos estadísticos utilizando modelos como ETS y ARIMA, con soporte para diferentes fuentes de historial (ventas, envíos) y parámetros de suavizado[cite: 1, 10, 20].
+    * [cite_start]Maneja la aplicación de ajustes manuales y la gestión de comentarios por celda[cite: 17, 36].
+    * [cite_start]Incluye lógica para calcular la "Historia Limpia" y el "Pronóstico Final" a partir de los datos históricos y los pronósticos estadísticos y ajustes[cite: 10, 35].
+    * Expone endpoints API para interactuar con todas estas funcionalidades.
+
+* **Frontend (React)**:
+    * [cite_start]Está construido con React y Vite[cite: 6, 9, 12, 13, 15, 16].
+    * [cite_start]Utiliza `ag-Grid-react` para mostrar una tabla de datos interactiva y editable[cite: 1, 19].
+    * [cite_start]Integra `react-plotly.js` para la visualización gráfica de los datos de ventas y pronósticos[cite: 8, 10].
+    * [cite_start]Permite seleccionar clientes y SKUs para filtrar la información mostrada[cite: 7, 18, 22].
+    * [cite_start]Incluye componentes para listar clientes, SKUs y figuras clave[cite: 7, 14, 22].
+    * [cite_start]Permite realizar ajustes manuales directamente en la tabla y agregar comentarios por celda, los cuales se envían al backend[cite: 1, 19, 27, 34, 36].
+    * [cite_start]Maneja la carga y visualización de datos históricos, pronósticos estadísticos, historia limpia y pronósticos finales desde la API del backend[cite: 1, 19].
+
+* **Base de Datos (PostgreSQL)**:
+    * [cite_start]El esquema de la base de datos (`forecaist_schema.sql`) define las tablas para dimensiones (clientes, SKUs, figuras clave, tipos de ajuste) y tablas de hechos (historial, pronósticos estadísticos, ajustes, comentarios, versiones)[cite: 1, 30].
+    * [cite_start]Se utilizan UUIDs para `client_id`, `sku_id`, `client_final_id`, `version_id` y `user_id`[cite: 1, 30].
+    * El script `migrate_data.py` se encarga de poblar las tablas dimensionales y de hechos con datos iniciales desde un archivo Excel (`DB.xlsx - Sheet1.csv`).
+
+### Funcionalidades Implementadas (Basado en el PDF y el Código)
+
+[cite_start]La mayoría de las funcionalidades principales descritas en el archivo `Forecaist.pdf` [cite: 5] parecen estar bien cubiertas en el código existente:
+
+1.  [cite_start]**Pantalla Principal**: La interfaz principal con la tabla dinámica editable y el gráfico asociado está implementada en el frontend (SalesForecastData.jsx, SalesChart.jsx)[cite: 1, 8, 19].
+2.  **Filtros Disponibles**: Se observa la implementación de filtros por cliente y SKU. [cite_start]La fuente de historia (ventas, envíos) también se maneja en el backend[cite: 1, 2, 17, 18, 24]. [cite_start]Los filtros de período también están presentes[cite: 1, 24].
+3.  [cite_start]**Tabla Editable**: La tabla en el frontend (`SalesForecastData.jsx`) es editable, permitiendo ajustes directos[cite: 1, 19, 27, 34].
+4.  [cite_start]**Comentarios por Celda**: La funcionalidad para agregar y ver comentarios mediante un menú contextual y un modal está implementada en el frontend (`SalesForecastData.jsx`) y el backend[cite: 1, 19, 35].
+5.  [cite_start]**Visualización Gráfica**: El gráfico dinámico en `SalesChart.jsx` visualiza la historia cruda, el pronóstico estadístico y el pronóstico final, actualizándose con los cambios[cite: 1, 8, 19].
+6.  [cite_start]**Generación del Forecast**: El backend tiene la lógica para generar pronósticos estadísticos (`forecast_engine.py`) con modelos configurables y horizontes de pronóstico[cite: 10, 31]. [cite_start]El frontend tiene un botón para disparar esta generación[cite: 19].
+7.  [cite_start]**Correcciones Manuales**: Los ajustes por cantidad y override absoluto están implementados a través de la edición de celdas y son persistidos en la base de datos mediante el backend[cite: 1, 17, 19, 36].
+8.  **Trazabilidad**: Las tablas de hechos en la base de datos (por ejemplo, `FactAdjustments` y `ManualInputComments`) incluyen `user_id` y `timestamp`, lo que sugiere una base para la trazabilidad.
+
+### Funcionalidades Faltantes o Incompletas
+
+[cite_start]Aunque gran parte de la funcionalidad está en su lugar, hay algunos puntos mencionados en el `Forecaist.pdf` [cite: 5] que no se ven completamente reflejados o que podrían necesitar mayor desarrollo:
+
+* [cite_start]**Nivel de Trabajo (SKU-Cliente, Grupo de Clientes, Grupo de SKUs)**: Si bien la aplicación maneja el nivel `SKU-Cliente`[cite: 5], la descripción menciona la posibilidad de trabajar a nivel de "Grupo de Clientes" y "Grupo de SKUs". Esto podría implicar:
+    * **Agregación/Desagregación**: La capacidad de los pronósticos y ajustes a estos niveles superiores y cómo se propagan a los niveles inferiores (SKU-Cliente). Actualmente, el pronóstico se genera por `client_id` y `sku_id`.
+    * [cite_start]**Interfaces de Usuario**: Los filtros permiten seleccionar un cliente y un SKU específico[cite: 19]. Sería necesario implementar la lógica para seleccionar grupos y cómo se visualizan y editan los datos a ese nivel.
+* **Gestión de Versiones (Snapshots)**: El PDF menciona la capacidad de crear versiones (snapshots) del forecast, guardando metadatos como fecha, usuario, fuente de historia, parámetro de suavizado y modelo estadístico. En el código:
+    * Existe un modelo `FactForecastVersioned` y `ForecastVersion`, y un endpoint `fetchForecastVersionedData` en el frontend, lo que indica que la estructura para guardar versiones está presente.
+    * Sin embargo, no se observa en el frontend una interfaz explícita (por ejemplo, un botón "Guardar Versión" o "Crear Snapshot") que permita al usuario crear estas versiones y asociar todos los metadatos descritos. Tampoco hay una interfaz para "comparar accuracy futuro o como referencia oficial".
+* **Multi-Cliente (Multi-tenant)**: El documento enfatiza que "Todo dato y acción está asociado a un client\_id, que: Se selecciona al inicio de la sesión / Filtra todas las operaciones del usuario / Se registra en cada tabla del sistema. Los datos están completamente aislados entre clientes, con trazabilidad total".
+    * [cite_start]El modelo de datos y las operaciones CRUD sí incluyen `client_id` y lo utilizan para filtrar datos[cite: 17, 24, 25, 30].
+    * Sin embargo, no hay un mecanismo visible en el frontend para que el usuario "seleccione un client\_id al inicio de la sesión" o cambie entre clientes. [cite_start]Actualmente, el `clientId` se pasa a través de la URL o como parámetro en las llamadas API (por ejemplo, `fetchSkus(clientId)`)[cite: 2]. Esto podría ser una configuración inicial o una simplificación, pero para una aplicación multi-inquilino completa, se necesitaría una interfaz de selección de cliente.
+* **Carga y Gestión de Datos**:
+    * El script `migrate_data.py` se encarga de la carga inicial de datos desde un archivo Excel.
+    * El PDF menciona "Pantallas secundarias permiten: Cargar historia de ventas (manual o por archivo) / Modificar la jerarquía de clientes y SKUs". No se observa en el frontend una interfaz para cargar archivos de historial directamente por parte del usuario o para modificar la jerarquía de clientes y SKUs de manera interactiva.
+    * Tampoco se ve una funcionalidad para "Visualizar forecast final en unidades o dinero (usando precios cargados)". El `FactHistory` y `FactForecastStat` solo parecen manejar `value` (presumiblemente unidades).
+
+## Próximos Pasos Sugeridos
+
+Para continuar con el desarrollo de Forecaist, te sugiero los siguientes pasos:
+
+1.  **Implementar la Gestión de Versiones (Snapshots) en el Frontend**:
+    * Crea un componente o añade funcionalidad en `SalesForecastData.jsx` para permitir al usuario guardar una versión actual del pronóstico. Esto implicaría llamar a un nuevo endpoint en el backend que recopile el estado actual del pronóstico (filtros, parámetros de suavizado, modelo, etc.) y lo guarde como una `ForecastVersion`, junto con las `FactForecastVersioned` correspondientes.
+    * Desarrolla una interfaz para listar estas versiones y permitir su carga para revisión o comparación.
+
+2.  **Desarrollar la Funcionalidad Multi-Cliente Completa**:
+    * Implementa una pantalla de selección de cliente al inicio de la aplicación o un selector de cliente global en la interfaz principal.
+    * Asegúrate de que todas las llamadas a la API incluyan el `client_id` del cliente seleccionado.
+
+3.  **Implementar la Carga y Gestión de Datos a través de la UI**:
+    * Crea interfaces de usuario para permitir a los usuarios cargar archivos de historial de ventas (por ejemplo, CSV o Excel), validando los datos antes de persistirlos en la base de datos.
+    * Considera agregar pantallas o modales para que los usuarios puedan modificar la jerarquía de clientes y SKUs si es un requisito interactivo.
+
+4.  **Ampliar la Lógica de Pronóstico para Grupos**:
+    * Si los pronósticos y ajustes a nivel de grupo son un requisito clave, implementa la lógica en el backend para agregar datos a nivel de grupo y desagregar los ajustes a nivel de SKU-Cliente. Esto puede ser complejo y requerirá una cuidadosa consideración de los algoritmos de desagregación.
+    * Adapta la interfaz de usuario para mostrar y permitir la interacción con estos niveles agregados.
+
+5.  **Refinar la Visualización Gráfica**:
+    * Asegúrate de que el gráfico maneje dinámicamente la cantidad de datos y los tipos de figuras clave seleccionados para una mejor experiencia de usuario.
+    * Si el cálculo de unidades vs. dinero es importante, deberás añadir la funcionalidad para cargar precios y realizar la conversión en el backend o frontend.
+
+6.  **Mejoras en la Trazabilidad**:
+    * Considera añadir un registro más detallado de los cambios realizados por los usuarios, más allá de solo la edición (por ejemplo, quién generó un pronóstico, cuándo se aplicó un ajuste, con qué parámetros). Los campos `user_id` y `timestamp` ya son un buen punto de partida.
+
+¡Espero que esta revisión te sea de gran ayuda! Estoy aquí para apoyarte en cada uno de estos pasos.

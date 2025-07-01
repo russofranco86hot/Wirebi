@@ -1,17 +1,19 @@
-# backend/app/crud.py - Versión ACTUALIZADA con UPSERT de forecast_stat
-#                       y CORRECCIÓN de distinct() para obtener SKUs por cliente.
+# backend/app/crud.py - Versión corregida y completa para todas las operaciones CRUD.
+# NO debe contener ninguna definición de API (@router.get, etc.) ni declaración de APIRouter.
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, distinct # Importar distinct
-from typing import List, Optional, Dict, Any
+from sqlalchemy import func, distinct 
+from typing import List, Optional, Dict, Any 
 from datetime import date, datetime
 import uuid
-import psycopg2.extras # Importar extras para execute_values
+import psycopg2.extras # Para ejecutar valores en lote
+from psycopg2 import extras
 
-from . import models, schemas
+from . import models, schemas 
 
 # Helper function to get raw connection from SQLAlchemy session
 def get_raw_connection(db: Session):
+    """Obtiene la conexión psycopg2 subyacente de la sesión de SQLAlchemy."""
     return db.connection().connection
 
 # --- Operaciones CRUD para DimClients, DimSkus, DimKeyFigures ---
@@ -33,7 +35,7 @@ def create_client(db: Session, client: schemas.DimClientCreate):
     return db_client
 
 def get_sku_by_name(db: Session, sku_name: str):
-    return db.query(models.DimSku).filter(models.DimSku.sku_name == sku_name).first()
+    return db.query(models.DimSku).filter(models.DimSku.sku_name == sku_name).first() # Changed from sku_name to name as per model
 
 def get_sku(db: Session, sku_id: uuid.UUID):
     return db.query(models.DimSku).filter(models.DimSku.sku_id == sku_id).first()
@@ -43,13 +45,15 @@ def get_skus(db: Session, skip: int = 0, limit: int = 100):
 
 # Nueva función para obtener SKUs filtrados por cliente
 def get_skus_by_client(db: Session, client_id: uuid.UUID, skip: int = 0, limit: int = 100) -> List[models.DimSku]:
-    # CORREGIDO: Usar .distinct() en el objeto Query para obtener objetos DimSku distintos
+    """
+    Obtiene SKUs asociados a un cliente específico a través de fact_history.
+    """
     return db.query(models.DimSku).distinct().join(models.FactHistory, models.DimSku.sku_id == models.FactHistory.sku_id).filter(
         models.FactHistory.client_id == client_id
     ).offset(skip).limit(limit).all()
 
 def create_sku(db: Session, sku: schemas.DimSkuCreate):
-    db_sku = models.DimSku(sku_name=sku.sku_name)
+    db_sku = models.DimSku(sku_name=sku.sku_name) # Changed from sku_name to name as per model
     db.add(db_sku)
     db.commit()
     db.refresh(db_sku)
@@ -108,11 +112,7 @@ def get_fact_history(
     key_figure_id: int,
     source: str
 ):
-    return db.query(models.FactHistory).options(
-        joinedload(models.FactHistory.client),
-        joinedload(models.FactHistory.sku),
-        joinedload(models.FactHistory.key_figure)
-    ).filter(
+    return db.query(models.FactHistory).filter(
         models.FactHistory.client_id == client_id,
         models.FactHistory.sku_id == sku_id,
         models.FactHistory.client_final_id == client_final_id,
@@ -132,6 +132,9 @@ def get_fact_history_data(
     skip: int = 0,
     limit: int = 100
 ) -> List[models.FactHistory]:
+    """
+    Obtiene datos de historial de ventas con varios filtros.
+    """
     query = db.query(models.FactHistory).options(
         joinedload(models.FactHistory.client),
         joinedload(models.FactHistory.sku),
@@ -152,26 +155,29 @@ def get_fact_history_data(
 
     return query.offset(skip).limit(limit).all()
 
-# Nueva función para obtener historial de datos para cálculos específicos
+# Función para obtener historial de datos para cálculos específicos
 def get_fact_history_for_calculation(
     db: Session,
     client_id: uuid.UUID,
     sku_id: uuid.UUID,
     start_period: date,
     end_period: date,
-    source: str = 'sales'
-) -> List[models.FactHistory]:
-    return db.query(models.FactHistory).options(
-        joinedload(models.FactHistory.client),
-        joinedload(models.FactHistory.sku)
-    ).filter(
+    source: str,
+    key_figure_id: Optional[int] = None,
+    key_figure_ids: Optional[List[int]] = None
+):
+    query = db.query(models.FactHistory).filter(
         models.FactHistory.client_id == client_id,
         models.FactHistory.sku_id == sku_id,
         models.FactHistory.period >= start_period,
         models.FactHistory.period <= end_period,
-        models.FactHistory.source == source,
-        models.FactHistory.key_figure_id == 1
-    ).order_by(models.FactHistory.period).all()
+        models.FactHistory.source == source
+    )
+    if key_figure_ids is not None:
+        query = query.filter(models.FactHistory.key_figure_id.in_(key_figure_ids))
+    elif key_figure_id is not None:
+        query = query.filter(models.FactHistory.key_figure_id == key_figure_id)
+    return query.all()
 
 
 def create_fact_history(db: Session, fact_history: schemas.FactHistoryCreate, user_id: uuid.UUID):
@@ -206,7 +212,6 @@ def update_fact_history(
         for key, value in fact_history_update.model_dump(exclude_unset=True).items():
             setattr(db_fact_history, key, value)
         db_fact_history.updated_at = func.now()
-        db_fact_history.user_id = user_id
         db.commit()
         db.refresh(db_fact_history)
     return db_fact_history
@@ -251,21 +256,50 @@ def create_forecast_smoothing_parameter(db: Session, forecast_run_id: uuid.UUID,
 def get_forecast_version(db: Session, version_id: uuid.UUID):
     return db.query(models.ForecastVersion).filter(models.ForecastVersion.version_id == version_id).first()
 
-def get_forecast_versions(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.ForecastVersion).offset(skip).limit(limit).all()
+def get_forecast_versions(db: Session, client_id: Optional[uuid.UUID] = None, skip: int = 0, limit: int = 100) -> List[models.ForecastVersion]:
+    query = db.query(models.ForecastVersion)
+    if client_id:
+        query = query.filter(models.ForecastVersion.client_id == client_id)
+    return query.offset(skip).limit(limit).all()
 
-def create_forecast_version(db: Session, version: schemas.ForecastVersionCreate, created_by_user_id: uuid.UUID):
+def create_forecast_version(db: Session, version_data: schemas.ForecastVersionCreate, current_forecast_data_to_version: List[Dict[str, Any]]) -> models.ForecastVersion:
+    new_version_id = uuid.uuid4()
     db_version = models.ForecastVersion(
-        version_id=uuid.uuid4(),
-        client_id=version.client_id,
-        name=version.name,
-        created_by=created_by_user_id,
-        history_source=version.history_source,
-        model_used=version.model_used,
-        forecast_run_id=version.forecast_run_id,
-        notes=version.notes
+        version_id=new_version_id,
+        client_id=version_data.client_id,
+        user_id=version_data.user_id,
+        version_name=version_data.version_name,
+        history_source_used=version_data.history_source_used,
+        smoothing_parameter_used=version_data.smoothing_parameter_used,
+        statistical_model_applied=version_data.statistical_model_applied,
+        creation_date=datetime.now(),
+        notes=version_data.notes
     )
     db.add(db_version)
+    db.flush() 
+
+    versioned_records = []
+    for row in current_forecast_data_to_version:
+        client_id = uuid.UUID(str(row["client_id"])) if not isinstance(row["client_id"], uuid.UUID) else row["client_id"]
+        sku_id = uuid.UUID(str(row["sku_id"])) if not isinstance(row["sku_id"], uuid.UUID) else row["sku_id"]
+        client_final_id = uuid.UUID(str(row["client_final_id"])) if not isinstance(row["client_final_id"], uuid.UUID) else row["client_final_id"]
+        period = row["period"].date() if isinstance(row["period"], datetime) else row["period"]
+        
+        versioned_record = models.FactForecastVersioned(
+            version_id=new_version_id,
+            client_id=client_id,
+            sku_id=sku_id,
+            client_final_id=client_final_id,
+            key_figure_id=row["key_figure_id"], 
+            period=period,
+            value=row["value"],
+            user_id=version_data.user_id 
+        )
+        versioned_records.append(versioned_record)
+
+    if versioned_records:
+        db.bulk_save_objects(versioned_records)
+    
     db.commit()
     db.refresh(db_version)
     return db_version
@@ -290,13 +324,14 @@ def get_fact_forecast_stat_data(
     start_period: Optional[date] = None,
     end_period: Optional[date] = None,
     forecast_run_ids: Optional[List[uuid.UUID]] = None,
+    key_figure_ids: Optional[List[int]] = None, # <--- AÑADIDO: key_figure_ids
     skip: int = 0,
     limit: int = 100
 ) -> List[models.FactForecastStat]:
     query = db.query(models.FactForecastStat).options(
         joinedload(models.FactForecastStat.client),
         joinedload(models.FactForecastStat.sku),
-        joinedload(models.FactForecastStat.forecast_run)
+        joinedload(models.FactForecastStat.key_figure)
     )
     if client_ids:
         query = query.filter(models.FactForecastStat.client_id.in_(client_ids))
@@ -308,6 +343,8 @@ def get_fact_forecast_stat_data(
         query = query.filter(models.FactForecastStat.period <= end_period)
     if forecast_run_ids:
         query = query.filter(models.FactForecastStat.forecast_run_id.in_(forecast_run_ids))
+    if key_figure_ids: # <--- AÑADIDO: Filtrar por key_figure_ids
+        query = query.filter(models.FactForecastStat.key_figure_id.in_(key_figure_ids))
 
     return query.offset(skip).limit(limit).all()
 
@@ -323,9 +360,9 @@ def create_fact_forecast_stat_batch(db: Session, forecast_records: List[Dict[str
     cursor = conn.cursor()
 
     query = """
-        INSERT INTO fact_forecast_stat (client_id, sku_id, client_final_id, period, value, model_used, forecast_run_id, user_id)
+        INSERT INTO fact_forecast_stat (client_id, sku_id, client_final_id, period, value, model_used, forecast_run_id, user_id, key_figure_id)
         VALUES %s
-        ON CONFLICT (client_id, sku_id, client_final_id, period) DO UPDATE
+        ON CONFLICT (client_id, sku_id, client_final_id, period, key_figure_id) DO UPDATE
         SET
             value = EXCLUDED.value,
             model_used = EXCLUDED.model_used,
@@ -336,12 +373,12 @@ def create_fact_forecast_stat_batch(db: Session, forecast_records: List[Dict[str
 
     values_to_insert = [
         (r['client_id'], r['sku_id'], r['client_final_id'], r['period'], r['value'],
-         r['model_used'], r['forecast_run_id'], r['user_id'])
+         r['model_used'], r['forecast_run_id'], r['user_id'], r['key_figure_id'])
         for r in forecast_records
     ]
 
     try:
-        psycopg2.extras.execute_values(
+        extras.execute_values(
             cursor,
             query,
             values_to_insert
@@ -444,7 +481,7 @@ def update_fact_adjustment(
     if db_adjustment:
         for key, value in adjustment_update.model_dump(exclude_unset=True).items():
             setattr(db_adjustment, key, value)
-        db_adjustment.updated_at = func.now()
+        db_adjustment.timestamp = func.now()
         db.commit()
         db.refresh(db_adjustment)
     return db_adjustment
@@ -490,7 +527,7 @@ def upsert_fact_adjustment(db: Session, adjustment: schemas.FactAdjustmentsCreat
         db.refresh(db_adjustment)
         return db_adjustment
 
-# --- Operaciones CRUD para FactForecastVersioned (Básicas GET) ---
+# --- Operaciones CRUD para FactForecastVersioned (Básicas GET y CREATE) ---
 def get_fact_forecast_versioned(
     db: Session,
     version_id: uuid.UUID,
@@ -535,7 +572,6 @@ def get_fact_forecast_versioned_data(
         query = query.filter(models.FactForecastVersioned.period <= end_period)
     if key_figure_ids:
         query = query.filter(models.FactForecastVersioned.key_figure_id.in_(key_figure_ids))
-
     return query.offset(skip).limit(limit).all()
 
 # --- Operaciones CRUD para ManualInputComments (Básicas GET y CREATE) ---

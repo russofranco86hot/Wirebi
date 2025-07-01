@@ -1,61 +1,96 @@
-# backend/app/forecast_engine.py - Versión con soporte para 'shipments',
-#                                  cálculo de Historia Limpia y Pronóstico Final
-#                                  MEJORADO: Logs de depuración, manejo de errores, NaN y client_final_id
-#                                  AÑADIDO: Log de shape de forecast_df
-#                                  CORREGIDO: FutureWarning de inplace=True
+# backend/app/forecast_engine.py
 
-import pandas as pd
-from statsforecast import StatsForecast
-from statsforecast.models import ETS, ARIMA
 from sqlalchemy.orm import Session
+from typing import List, Dict, Any
 from datetime import date, timedelta
-import uuid
-import logging
-from typing import List, Dict, Any, Optional
+import pandas as pd
+from statsmodels.tsa.api import ExponentialSmoothing, SimpleExpSmoothing, Holt 
+from statsmodels.tsa.arima.model import ARIMA 
+import numpy as np
+import uuid 
+import logging 
 
-from . import models, crud, schemas
-from psycopg2 import extras # Se mantiene la importación aunque no se use directamente en las nuevas funciones, se usaba en create_fact_forecast_stat_batch
+from . import crud, models, schemas
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) 
 
-# --- Definir DEFAULT_USER_ID aquí para que sea accesible en este módulo ---
-DEFAULT_USER_ID = uuid.UUID('00000000-0000-0000-0000-000000000001')
-# -------------------------------------------------------------------------
+# Helper function to get dates in a range (first day of each month)
+def get_dates_in_range(start_date: date, end_date: date) -> List[date]:
+    dates = []
+    current_date = start_date
+    while current_date <= end_date:
+        dates.append(current_date)
+        if current_date.month == 12:
+            current_date = current_date.replace(year=current_date.year + 1, month=1, day=1)
+        else:
+            current_date = current_date.replace(month=current_date.month + 1, day=1)
+    return dates
 
-# --- Constantes para Key Figure IDs y Adjustment Type IDs ---
-KF_SALES_ID = 1
-KF_ORDER_ID = 2
-KF_SHIPMENTS_ID = 3
-KF_STATISTICAL_FORECAST_ID = 4
-KF_CLEAN_HISTORY_ID = 5
-KF_FINAL_FORECAST_ID = 6
-
-ADJ_TYPE_MANUAL_QTY_ID = 1
-ADJ_TYPE_MANUAL_PCT_ID = 2
-ADJ_TYPE_OVERRIDE_ID = 3
-ADJ_TYPE_CLEAN_BY_PCT_ID = 4
-# -----------------------------------------------------------
-
-# --- Modelos de Forecast que Forecaist puede usar ---
-FORECAST_MODELS = {
-    "ETS": ETS,
-    "ARIMA": ARIMA,
-}
-
-# --- Constante para el número mínimo de puntos de datos para el pronóstico ---
-MIN_FORECAST_POINTS = 5
-
-def calculate_smoothed_history(data_df: pd.DataFrame, alpha: float) -> pd.DataFrame:
+def calculate_manual_input_history(
+    db: Session,
+    client_id: uuid.UUID,
+    sku_id: uuid.UUID,
+    client_final_id: uuid.UUID,
+    start_period: date,
+    end_period: date,
+    history_source: str = 'sales'
+) -> List[schemas.CleanHistoryData]:
     """
-    Calcula la historia suavizada utilizando suavizado exponencial simple.
-    Requiere un DataFrame con 'ds' (fechas) y 'y' (valores).
+    Calculates manual input history (formerly clean history) by fetching raw history
+    and returning it in the CleanHistoryData schema (now representing 'Manual input').
+    If there is an override adjustment for Manual input, it takes precedence.
     """
-    if data_df.empty:
-        return pd.DataFrame(columns=['ds', 'y_smoothed'])
+    # Se debe pedir la historia cruda (KEY_FIGURE_SALES_ID o KEY_FIGURE_ORDERS_ID)
+    kf_id_for_raw_history_source = None
+    if history_source == 'sales':
+        kf_id_for_raw_history_source = schemas.KEY_FIGURE_SALES_ID
+    elif history_source == 'order' or history_source == 'shipments':
+        kf_id_for_raw_history_source = schemas.KEY_FIGURE_ORDERS_ID
+    else:
+        logger.warning(f"Fuente de historia '{history_source}' no reconocida para calcular manual input. Usando Sales como fallback.")
+        kf_id_for_raw_history_source = schemas.KEY_FIGURE_SALES_ID
 
-    data_df = data_df.sort_values(by='ds')
-    data_df['y_smoothed'] = data_df['y'].ewm(alpha=alpha, adjust=False).mean()
-    return data_df
+    # 1. Obtener historia cruda
+    raw_history_entries = crud.get_fact_history_for_calculation(
+        db=db,
+        client_id=client_id,
+        sku_id=sku_id,
+        start_period=start_period,
+        end_period=end_period,
+        source=history_source,
+        key_figure_id=kf_id_for_raw_history_source
+    )
+
+    # 2. Obtener overrides para Manual input en el rango
+    manual_input_overrides = crud.get_fact_adjustments_for_calculation(
+        db=db,
+        client_id=client_id,
+        sku_id=sku_id,
+        start_period=start_period,
+        end_period=end_period,
+        key_figure_id=schemas.KEY_FIGURE_MANUAL_INPUT_ID,
+        adjustment_type_ids=[schemas.ADJUSTMENT_TYPE_OVERRIDE_ID]
+    )
+    # Mapear overrides por periodo para lookup rápido
+    overrides_map = {adj.period: adj.value for adj in manual_input_overrides}
+
+    manual_input_data_list = []
+    for entry in raw_history_entries:
+        if entry.value is None:
+            continue
+        # Si hay override para este periodo, usarlo
+        value_to_use = overrides_map.get(entry.period, entry.value)
+        manual_input_data_list.append(schemas.CleanHistoryData(
+            client_id=entry.client_id,
+            sku_id=entry.sku_id,
+            client_final_id=client_final_id,
+            period=entry.period,
+            value=value_to_use,
+            clientName=entry.client.client_name if entry.client else None,
+            skuName=entry.sku.sku_name if entry.sku else None,
+            keyFigureName="Manual input"
+        ))
+    return manual_input_data_list
 
 def generate_forecast(
     db: Session,
@@ -64,263 +99,348 @@ def generate_forecast(
     history_source: str,
     smoothing_alpha: float,
     model_name: str,
-    forecast_horizon: int
-) -> dict:
+    forecast_horizon: int,
+    user_id: uuid.UUID 
+) -> Dict[str, Any]:
     """
-    Genera un pronóstico estadístico para un SKU y Cliente dados,
-    utilizando la historia de ventas, pedidos o envíos como base.
+    Generates a statistical forecast for a given SKU-Client pair.
+    Uses 'Manual input' KF (ID 5) as the base for forecasting if available, otherwise raw history.
     """
-    logger.info(f"Iniciando generación de pronóstico para Cliente {client_id}, SKU {sku_id} con fuente {history_source}, modelo {model_name} y horizonte {forecast_horizon} meses.")
-
-    # Paso 1: Obtener la figura clave ID de la fuente histórica
-    source_key_figure_map = {
-        'sales': KF_SALES_ID,
-        'order': KF_ORDER_ID,
-        'shipments': KF_SHIPMENTS_ID
-    }
-    history_key_figure_id = source_key_figure_map.get(history_source)
-    if history_key_figure_id is None:
-        raise RuntimeError(f"Fuente histórica no válida: {history_source}")
-
-    try:
-        # Obtener toda la historia relevante para el par cliente-sku y fuente
-        raw_history_data_query = crud.get_fact_history_data(
-            db,
-            client_ids=[client_id],
-            sku_ids=[sku_id],
-            key_figure_ids=[history_key_figure_id],
-            sources=[history_source]
-        )
-        
-        if not raw_history_data_query:
-            raise RuntimeError(f"No hay suficientes datos históricos de '{history_source}' para generar el pronóstico para Cliente {client_id}, SKU {sku_id}. Asegúrate de que los filtros seleccionados tienen datos.")
-
-        # Convertir a DataFrame de Pandas para StatsForecast
-        history_df = pd.DataFrame([
-            {'unique_id': f"{item.client_id}-{item.sku_id}", 'ds': item.period, 'y': item.value}
-            for item in raw_history_data_query
-        ])
-        
-        # Asegurar que 'ds' sea datetime y 'y' sea numérico
-        history_df['ds'] = pd.to_datetime(history_df['ds'])
-        history_df['y'] = pd.to_numeric(history_df['y'])
-
-        # Rellenar NaNs en la columna 'y' (valor) con 0 para evitar problemas en StatsForecast
-        history_df['y'] = history_df['y'].fillna(0) # CORREGIDO: Eliminado inplace=True para FutureWarning
-
-        logger.info(f"History DataFrame antes del pronóstico (head):\n{history_df.head().to_string()}")
-        logger.info(f"History DataFrame info:\n{history_df.info()}")
-
-        if history_df.empty or len(history_df) < MIN_FORECAST_POINTS:
-            raise RuntimeError(f"Conjunto de datos demasiado pequeño ({len(history_df)} puntos). Se requieren al menos {MIN_FORECAST_POINTS} puntos para generar el pronóstico.")
-
-        # Advertencia si los datos son constantes o tienen muy poca variabilidad
-        if history_df['y'].nunique() <= 1:
-             logger.warning(f"ADVERTENCIA: Los datos históricos para Cliente {client_id}, SKU {sku_id} son constantes o tienen muy poca variabilidad para el modelo {model_name}. Datos: {history_df['y'].tolist()}")
-
-        # Solo necesitamos un unique_id para StatsForecast para este caso de un solo par Client-SKU
-        history_df['unique_id'] = f"{client_id}-{sku_id}"
-
-        # Preparar el modelo de pronóstico
-        models_to_forecast = [FORECAST_MODELS[model_name]()]
-        
-        sf = StatsForecast(
-            models=models_to_forecast,
-            freq='MS' # Asumiendo frecuencia mensual ('MS' para Month Start)
-        )
-
-        sf.fit(history_df)
-        forecast_df = sf.predict(h=forecast_horizon) # Aquí se solicita el horizonte
-
-        logger.info(f"Forecast DataFrame después de la predicción (head):\n{forecast_df.head().to_string()}")
-        logger.info(f"Forecast DataFrame columnas: {forecast_df.columns.tolist()}")
-        logger.info(f"Forecast DataFrame Shape (filas, columnas): {forecast_df.shape}") # NUEVO LOG CLAVE
-
-        forecast_records = []
-        new_forecast_run_id = uuid.uuid4()
-
-        crud.create_forecast_smoothing_parameter(
-            db=db,
-            forecast_run_id=new_forecast_run_id,
-            client_id=client_id,
-            alpha=smoothing_alpha,
-            user_id=DEFAULT_USER_ID
-        )
-
-        for _, row in forecast_df.iterrows():
-            model_output_column = model_name.lower()
-            
-            actual_output_column = None
-            if model_output_column in row:
-                actual_output_column = model_output_column
-            else:
-                matching_cols = [col for col in forecast_df.columns if col.lower().startswith(model_output_column)]
-                if matching_cols:
-                    actual_output_column = matching_cols[0]
-                
-            if not actual_output_column:
-                 logger.error(f"Error: La columna de salida esperada '{model_output_column}' no se encontró en el DataFrame de pronóstico. Columnas disponibles: {forecast_df.columns.tolist()}")
-                 raise RuntimeError(f"Error de salida del modelo: La columna del pronóstico para '{model_name}' no se encontró. Esto puede indicar un fallo del modelo o datos insuficientes/inadecuados.")
-            
-            forecast_value = row[actual_output_column]
-
-            forecast_records.append({
-                'client_id': client_id,
-                'sku_id': sku_id,
-                'client_final_id': raw_history_data_query[0].client_final_id if raw_history_data_query and raw_history_data_query[0].client_final_id else crud.get_client(db, client_id).client_id,
-                'period': row['ds'].date(),
-                'value': forecast_value,
-                'model_used': model_name,
-                'forecast_run_id': new_forecast_run_id,
-                'user_id': DEFAULT_USER_ID
-            })
-        
-        crud.create_fact_forecast_stat_batch(db, forecast_records)
-
-        logger.info(f"Pronóstico generado y guardado exitosamente para Cliente {client_id}, SKU {sku_id}.")
-        return {"message": "Pronóstico generado y guardado exitosamente.", "forecast_run_id": str(new_forecast_run_id)}
-
-    except RuntimeError as e:
-        logger.error(f"Error específico de ejecución del pronóstico: {e}")
-        raise
-    except KeyError as e:
-        logger.error(f"KeyError al procesar el pronóstico: La columna '{e}' no se encontró en el pronóstico de StatsForecast. Esto indica un fallo en la generación del pronóstico por el modelo.", exc_info=True)
-        raise RuntimeError(f"Error de procesamiento de pronóstico: La columna de salida del modelo '{e}' no se encontró. Verifica los datos históricos o el modelo de pronóstico.")
-    except Exception as e:
-        logger.error(f"Error inesperado en la generación del pronóstico: {e}", exc_info=True)
-        raise RuntimeError(f"Error interno al generar el pronóstico: {e}. Por favor, revisa los logs del servidor para más detalles del traceback.")
-
-
-def calculate_clean_history(
-    db: Session,
-    client_id: uuid.UUID,
-    sku_id: uuid.UUID,
-    client_final_id: uuid.UUID, # Necesario para la PK en la DB
-    start_period: date,
-    end_period: date,
-    history_source: str = 'sales', # Fuente de historia cruda
-    cleaning_adj_type_ids: Optional[List[int]] = None # Tipos de ajuste que "limpian" la historia
-) -> List[schemas.CleanHistoryData]:
-    """
-    Calcula la 'Historia Limpia' aplicando ajustes de limpieza a la historia cruda.
-    """
-    if cleaning_adj_type_ids is None:
-        cleaning_adj_type_ids = [ADJ_TYPE_CLEAN_BY_PCT_ID] # Por defecto, usar 'Clean by Pct'
-
-    # Obtener historia cruda (ej. 'Sales')
-    raw_history = crud.get_fact_history_for_calculation(
-        db,
+    end_history_period = date.today().replace(day=1) - timedelta(days=1) 
+    start_history_period = (end_history_period - timedelta(days=365 * 3)).replace(day=1)
+    
+    # Priorizamos 'Manual input' (ID 5) para la serie histórica base, ya que es la versión "limpia" y editable.
+    manual_input_data_for_series = crud.get_fact_history_for_calculation(
+        db=db,
         client_id=client_id,
         sku_id=sku_id,
-        start_period=start_period,
-        end_period=end_period,
-        source=history_source
+        start_period=start_history_period,
+        end_period=end_history_period,
+        source='sales', # Manual input suele ser 'sales'
+        key_figure_id=schemas.KEY_FIGURE_MANUAL_INPUT_ID
     )
+    
+    history_series = None
+    if manual_input_data_for_series: # Si hay datos de 'Manual input', usarlos
+        history_series_manual_input = pd.Series(
+            [d.value for d in manual_input_data_for_series if d.value is not None], # Filtrar None
+            index=[d.period for d in manual_input_data_for_series if d.value is not None]
+        ).asfreq('MS')
+        history_series = history_series_manual_input.fillna(method='ffill').fillna(method='bfill').fillna(0)
+    else: # Si no hay datos de 'Manual input', usar la fuente raw elegida
+        kf_id_for_raw_base = None
+        if history_source == 'sales':
+            kf_id_for_raw_base = schemas.KEY_FIGURE_SALES_ID
+        elif history_source == 'order' or history_source == 'shipments':
+            kf_id_for_raw_base = schemas.KEY_FIGURE_ORDERS_ID
+        
+        if kf_id_for_raw_base:
+            history_base_data = crud.get_fact_history_for_calculation(
+                db=db,
+                client_id=client_id,
+                sku_id=sku_id,
+                client_final_id=client_id,
+                start_period=start_history_period,
+                end_period=end_history_period,
+                source=history_source,
+                key_figure_id=kf_id_for_raw_base # Obtener la KF raw correspondiente a la fuente
+            )
+            if history_base_data:
+                history_series_raw_base = pd.Series(
+                    [d.value for d in history_base_data if d.value is not None], 
+                    index=[d.period for d in history_base_data if d.value is not None]
+                ).asfreq('MS')
+                history_series = history_series_raw_base.fillna(method='ffill').fillna(method='bfill').fillna(0)
 
-    # Obtener ajustes de limpieza
-    cleaning_adjustments = crud.get_fact_adjustments_for_calculation(
-        db,
-        client_id=client_id,
-        sku_id=sku_id,
-        start_period=start_period,
-        end_period=end_period,
-        key_figure_id=KF_SALES_ID, # Ajustes aplicados a la historia de ventas (Sales)
-        adjustment_type_ids=cleaning_adj_type_ids
-    )
-
-    # Convertir a diccionarios para facilitar la manipulación por período
-    history_map = {item.period: item.value for item in raw_history}
-    adjustments_map = {item.period: item.value for item in cleaning_adjustments}
-
-    clean_history_results = []
-    # Iterar sobre el rango de fechas para asegurar continuidad y aplicar ajustes
-    current_period = start_period
-    while current_period <= end_period:
-        raw_value = history_map.get(current_period, 0.0) # Si no hay dato, asumir 0
-        cleaning_adj_value = adjustments_map.get(current_period, 0.0)
-
-        # Lógica de limpieza: historia cruda - ajustes de limpieza
-        clean_value = raw_value - cleaning_adj_value
-
-        clean_history_results.append(schemas.CleanHistoryData(
-            client_id=client_id,
-            sku_id=sku_id,
-            client_final_id=client_final_id, # Se asume el mismo client_final_id
-            period=current_period,
-            value=clean_value,
-            clientName=raw_history[0].client.client_name if raw_history else "N/A",
-            skuName=raw_history[0].sku.sku_name if raw_history else "N/A"
-        ))
-        # Mover al siguiente mes
-        if current_period.month == 12:
-            current_period = current_period.replace(year=current_period.year + 1, month=1, day=1)
+    if history_series is None or history_series.empty or history_series.isnull().all():
+        raise RuntimeError("La serie histórica está vacía o contiene solo valores nulos. No se puede generar el pronóstico.")
+    
+    forecast_values = []
+    
+    if model_name == "ETS":
+        seasonal_periods = 12 
+        if len(history_series) < (2 * seasonal_periods):
+            try:
+                model = SimpleExpSmoothing(history_series, initialization_method="estimated").fit(
+                    smoothing_level=smoothing_alpha 
+                )
+                forecast_values = model.forecast(steps=forecast_horizon)
+            except Exception as e:
+                 raise RuntimeError(f"Error al ajustar o pronosticar con modelo SES (sin estacionalidad): {e}")
         else:
-            current_period = current_period.replace(month=current_period.month + 1, day=1)
+            try:
+                model = ExponentialSmoothing(
+                    history_series, 
+                    seasonal_periods=seasonal_periods,
+                    trend='add',          
+                    seasonal='add',       
+                    initialization_method="estimated"
+                ).fit(smoothing_level=smoothing_alpha)
+                
+                forecast_values = model.forecast(steps=forecast_horizon)
+            except Exception as e:
+                raise RuntimeError(f"Error al ajustar o pronosticar con modelo ETS (estacional): {e}")
+    
+    elif model_name == "ARIMA":
+        arima_series = history_series 
+        if arima_series.empty:
+            raise RuntimeError("La serie para el modelo ARIMA está vacía después de eliminar NaN.")
+        
+        order = (1,1,1) 
+        try:
+            model = ARIMA(arima_series, order=order).fit()
+            forecast_values = model.predict(start=len(arima_series), end=len(arima_series) + forecast_horizon - 1)
+        except Exception as e:
+            raise RuntimeError(f"Error al ajustar o pronosticar con modelo ARIMA (orden {order}): {e}")
+    
+    else:
+        raise ValueError("Modelo de pronóstico no soportado.")
 
-    return clean_history_results
+    forecast_run_id = uuid.uuid4()
+    
+    crud.create_forecast_smoothing_parameter(
+        db=db,
+        forecast_run_id=forecast_run_id,
+        client_id=client_id,
+        alpha=smoothing_alpha,
+        user_id=user_id 
+    )
+
+    forecast_records = []
+    last_history_date = history_series.index[-1].date() if not history_series.empty else start_history_period
+    
+    stat_forecast_kf_id = None
+    if history_source == 'sales':
+        stat_forecast_kf_id = schemas.KEY_FIGURE_STAT_FORECAST_SALES_ID
+    elif history_source == 'order' or history_source == 'shipments':
+        stat_forecast_kf_id = schemas.KEY_FIGURE_STAT_FORECAST_ORDERS_ID
+    else:
+        # Fallback si la fuente no es reconocida, o un error si no debería ocurrir
+        logger.warning(f"Fuente de historia '{history_source}' no reconocida para asignar ID de pronóstico estadístico. Usando Sales Stat Forecast como fallback.")
+        stat_forecast_kf_id = schemas.KEY_FIGURE_STAT_FORECAST_SALES_ID
+
+
+    for i, value in enumerate(forecast_values):
+        current_forecast_date = (pd.to_datetime(last_history_date) + pd.DateOffset(months=i+1)).date()
+
+        forecast_records.append({
+            "client_id": client_id,
+            "sku_id": sku_id,
+            "client_final_id": client_id, 
+            "period": current_forecast_date,
+            "value": float(value), 
+            "model_used": model_name,
+            "forecast_run_id": forecast_run_id,
+            "user_id": user_id,
+            "key_figure_id": stat_forecast_kf_id 
+        })
+    
+    crud.create_fact_forecast_stat_batch(db=db, forecast_records=forecast_records)
+
+    return {"status": "success", "forecast_run_id": str(forecast_run_id), "forecast_periods": len(forecast_records)}
+
 
 def calculate_final_forecast(
     db: Session,
     client_id: uuid.UUID,
     sku_id: uuid.UUID,
-    client_final_id: uuid.UUID, # Necesario para la PK en la DB
+    client_final_id: uuid.UUID,
     start_period: date,
-    end_period: date,
-    forecast_key_figure_id: int = KF_STATISTICAL_FORECAST_ID, # Pronóstico base
-    forecast_adj_type_ids: Optional[List[int]] = None # Tipos de ajuste que modifican el pronóstico
+    end_period: date
 ) -> List[schemas.FinalForecastData]:
     """
-    Calcula el 'Pronóstico Final' aplicando ajustes al pronóstico estadístico base.
+    Calculates the final forecast by applying manual adjustments (cantidad, porcentaje, override)
+    to the statistical forecast.
     """
-    if forecast_adj_type_ids is None:
-        forecast_adj_type_ids = [ADJ_TYPE_OVERRIDE_ID] # Por defecto, usar 'Override'
+    logger.info(f"--- Entering calculate_final_forecast for Client: {client_id}, SKU: {sku_id}, Period: {start_period} to {end_period} ---")
 
-    # Obtener el pronóstico estadístico base
-    statistical_forecast_data = crud.get_fact_forecast_stat_data(
-        db,
-        client_ids=[client_id],
-        sku_ids=[sku_id],
-        start_period=start_period,
-        end_period=end_period
+    # Obtener Pronósticos Estadísticos de Sales y Orders
+    stat_forecasts_sales = crud.get_fact_forecast_stat_data(
+        db=db, client_ids=[client_id], sku_ids=[sku_id],
+        start_period=start_period, end_period=end_period,
+        key_figure_ids=[schemas.KEY_FIGURE_STAT_FORECAST_SALES_ID]
     )
-    
-    # Obtener ajustes que afectan al pronóstico (ej. Overrides)
-    forecast_adjustments = crud.get_fact_adjustments_for_calculation(
-        db,
+    stat_forecasts_orders = crud.get_fact_forecast_stat_data(
+        db=db, client_ids=[client_id], sku_ids=[sku_id],
+        start_period=start_period, end_period=end_period,
+        key_figure_ids=[schemas.KEY_FIGURE_STAT_FORECAST_ORDERS_ID]
+    )
+    all_stat_forecasts = stat_forecasts_sales + stat_forecasts_orders
+    logger.info(f"Fetched {len(all_stat_forecasts)} raw statistical forecasts (Sales & Orders).")
+
+
+    manual_adjustments = crud.get_fact_adjustments_for_calculation(
+        db=db,
         client_id=client_id,
         sku_id=sku_id,
         start_period=start_period,
         end_period=end_period,
-        key_figure_id=KF_STATISTICAL_FORECAST_ID, # Ajustes aplicados al pronóstico estadístico
-        adjustment_type_ids=forecast_adj_type_ids
+        adjustment_type_ids=[schemas.ADJUSTMENT_TYPE_QTY_ID, schemas.ADJUSTMENT_TYPE_PCT_ID, schemas.ADJUSTMENT_TYPE_OVERRIDE_ID]
     )
+    logger.info(f"Fetched {len(manual_adjustments)} total manual adjustments. Details:")
+    for adj in manual_adjustments:
+        logger.info(f"  - Adj Period: {adj.period}, KF_ID: {adj.key_figure_id}, AdjType_ID: {adj.adjustment_type_id}, Value: {adj.value}")
 
-    # Convertir a diccionarios para facilitar la manipulación por período
-    forecast_map = {item.period: item.value for item in statistical_forecast_data}
-    adjustments_map = {item.period: item.value for item in forecast_adjustments}
 
-    final_forecast_results = []
-    current_period = start_period
-    while current_period <= end_period:
-        statistical_value = forecast_map.get(current_period, 0.0)
-        adjustment_value = adjustments_map.get(current_period, 0.0)
+    # Fetch all relevant history data to use as base for historical periods of Final Forecast
+    # Asumimos que 'Manual input' (ID 5) es la base para los ajustes históricos si existe,
+    # o 'Sales' (ID 1) si no.
+    historical_base_kfs = [
+        schemas.KEY_FIGURE_SALES_ID,
+        schemas.KEY_FIGURE_ORDERS_ID,
+        schemas.KEY_FIGURE_SMOOTHED_SALES_ID,
+        schemas.KEY_FIGURE_SMOOTHED_ORDERS_ID,
+        schemas.KEY_FIGURE_MANUAL_INPUT_ID 
+    ]
+    all_history_data_from_db = crud.get_fact_history_for_calculation(
+        db=db,
+        client_id=client_id,
+        sku_id=sku_id,
+        start_period=start_period,
+        end_period=end_period,
+        source='sales', # Asumimos la fuente principal para estas bases históricas
+        key_figure_ids=historical_base_kfs # Obtener todas estas figuras históricas
+    )
+    history_map = { (item.period, item.key_figure_id): item.value for item in all_history_data_from_db if item.period is not None and item.value is not None}
+    logger.info(f"Historical base map built with {len(history_map)} entries.")
 
-        # Lógica de Pronóstico Final: Pronóstico Estadístico + Ajustes (Override)
-        final_value = statistical_value + adjustment_value # Asumimos que los overrides son aditivos
 
-        final_forecast_results.append(schemas.FinalForecastData(
+    # Prepare DataFrames for easier lookup
+    stat_forecast_cols = ['period', 'value', 'client_id', 'sku_id', 'client_final_id', 'key_figure_id'] # Añadir key_figure_id
+    adj_cols = ['period', 'value', 'key_figure_id', 'adjustment_type_id']
+
+    if all_stat_forecasts: 
+        forecast_df = pd.DataFrame([
+            {'period': f.period, 'value': f.value, 'client_id': f.client_id, 'sku_id': f.sku_id, 'client_final_id': f.client_final_id, 'key_figure_id': f.key_figure_id}
+            for f in all_stat_forecasts
+        ]).set_index('period')
+    else:
+        forecast_df = pd.DataFrame(columns=stat_forecast_cols).set_index('period')
+    
+    if manual_adjustments:
+        adjustments_df = pd.DataFrame([
+            {'period': a.period, 'value': a.value, 'key_figure_id': a.key_figure_id, 'adjustment_type_id': a.adjustment_type_id}
+            for a in manual_adjustments
+        ]).set_index('period')
+    else:
+        adjustments_df = pd.DataFrame(columns=adj_cols).set_index('period')
+
+
+    final_forecast_list = []
+
+    forecast_start_date = None
+    if not forecast_df.empty:
+        forecast_start_date = forecast_df.index.min() 
+    logger.info(f"Derived statistical forecast start date: {forecast_start_date}")
+
+    all_periods_in_range = get_dates_in_range(start_period, end_period)
+    
+    for period in all_periods_in_range:
+        current_base_value = None
+        period_is_historical = (forecast_start_date is None) or (period < forecast_start_date)
+
+        if period_is_historical:
+            manual_input_val = history_map.get((period, schemas.KEY_FIGURE_MANUAL_INPUT_ID))
+            if manual_input_val is not None:
+                current_base_value = manual_input_val
+            else: # Si no hay 'Manual input', usar 'Sales' como historia cruda base
+                current_base_value = history_map.get((period, schemas.KEY_FIGURE_SALES_ID))
+            logger.debug(f"Period {period}: Historical. Base from history_map (Manual Input/Sales): {current_base_value}")
+        else:
+            stat_sales_val = forecast_df.loc[(period, schemas.KEY_FIGURE_STAT_FORECAST_SALES_ID), 'value'] if (period, schemas.KEY_FIGURE_STAT_FORECAST_SALES_ID) in forecast_df.index else None
+            stat_orders_val = forecast_df.loc[(period, schemas.KEY_FIGURE_STAT_FORECAST_ORDERS_ID), 'value'] if (period, schemas.KEY_FIGURE_STAT_FORECAST_ORDERS_ID) in forecast_df.index else None
+            
+            if stat_sales_val is not None and stat_orders_val is not None:
+                current_base_value = float(stat_sales_val) + float(stat_orders_val) 
+            elif stat_sales_val is not None:
+                current_base_value = float(stat_sales_val)
+            elif stat_orders_val is not None:
+                current_base_value = float(stat_orders_val)
+            
+            logger.debug(f"Period {period}: Forecast. Base from stat forecast (Sales/Orders): {current_base_value}")
+        
+        if current_base_value is None:
+            logger.debug(f"Period {period}: No base value found, adding None to final forecast.")
+            final_forecast_list.append(schemas.FinalForecastData(
+                client_id=client_id, sku_id=sku_id, client_final_id=client_final_id,
+                period=period, value=None
+            ))
+            continue 
+
+
+        adjusted_value = current_base_value
+        logger.debug(f"Period {period}: Initial adjusted_value (base): {adjusted_value}")
+
+        period_adjustments_df = pd.DataFrame(columns=['key_figure_id', 'adjustment_type_id', 'value'])
+
+        if period in adjustments_df.index:
+            period_adjustments_df = adjustments_df.loc[[period]] 
+            if isinstance(period_adjustments_df, pd.Series): 
+                period_adjustments_df = pd.DataFrame([period_adjustments_df.to_dict()])
+            logger.debug(f"Period {period}: Raw adjustments for this period:\n{period_adjustments_df.to_string()}")
+
+
+        if not period_adjustments_df.empty: 
+            old_adjusted_value = adjusted_value 
+            
+            override_applied = False
+
+            override_general_adj = period_adjustments_df[
+                (period_adjustments_df['key_figure_id'].isin([schemas.KEY_FIGURE_FINAL_FORECAST_ID, schemas.KEY_FIGURE_MANUAL_INPUT_ID])) &
+                (period_adjustments_df['adjustment_type_id'] == schemas.ADJUSTMENT_TYPE_OVERRIDE_ID)
+            ]
+            if not override_general_adj.empty:
+                adjusted_value = float(override_general_adj['value'].iloc[0]) 
+                logger.info(f"Period {period}: Applied general override (Final/Manual Input). Old: {old_adjusted_value}, New: {adjusted_value}")
+                override_applied = True
+            else:
+                if not period_is_historical: 
+                    override_stat_sales_kf_adj = period_adjustments_df[
+                        (period_adjustments_df['key_figure_id'] == schemas.KEY_FIGURE_STAT_FORECAST_SALES_ID) &
+                        (period_adjustments_df['adjustment_type_id'] == schemas.ADJUSTMENT_TYPE_OVERRIDE_ID)
+                    ]
+                    override_stat_orders_kf_adj = period_adjustments_df[
+                        (period_adjustments_df['key_figure_id'] == schemas.KEY_FIGURE_STAT_FORECAST_ORDERS_ID) &
+                        (period_adjustments_df['adjustment_type_id'] == schemas.ADJUSTMENT_TYPE_OVERRIDE_ID)
+                    ]
+                    if not override_stat_sales_kf_adj.empty:
+                        adjusted_value = float(override_stat_sales_kf_adj['value'].iloc[0])
+                        logger.info(f"Period {period}: Applied STAT_FORECAST_SALES_ID override. New value: {adjusted_value}")
+                        override_applied = True
+                    elif not override_stat_orders_kf_adj.empty:
+                        adjusted_value = float(override_stat_orders_kf_adj['value'].iloc[0])
+                        logger.info(f"Period {period}: Applied STAT_FORECAST_ORDERS_ID override. New value: {adjusted_value}")
+                        override_applied = True
+            
+            if not override_applied: 
+                qty_adj = period_adjustments_df[
+                    (period_adjustments_df['key_figure_id'].isin([schemas.KEY_FIGURE_FINAL_FORECAST_ID, schemas.KEY_FIGURE_MANUAL_INPUT_ID])) & 
+                    (period_adjustments_df['adjustment_type_id'] == schemas.ADJUSTMENT_TYPE_QTY_ID)
+                ]
+                if not qty_adj.empty:
+                    old_adjusted_value = adjusted_value 
+                    adjusted_value += float(qty_adj['value'].iloc[0])
+                    logger.debug(f"Period {period}: Applied quantity adjustment. Old: {old_adjusted_value}, New: {adjusted_value}")
+
+                pct_adj = period_adjustments_df[
+                    (period_adjustments_df['key_figure_id'].isin([schemas.KEY_FIGURE_FINAL_FORECAST_ID, schemas.KEY_FIGURE_MANUAL_INPUT_ID])) & 
+                    (period_adjustments_df['adjustment_type_id'] == schemas.ADJUSTMENT_TYPE_PCT_ID)
+                ]
+                if not pct_adj.empty:
+                    old_adjusted_value = adjusted_value 
+                    adjusted_value *= (1 + float(pct_adj['value'].iloc[0]) / 100) 
+                    logger.debug(f"Period {period}: Applied percentage adjustment. Old: {old_adjusted_value}, New: {adjusted_value}")
+            else:
+                logger.debug(f"Period {period}: Override (Final/Manual Input or Stat) was applied, skipping Quantity/Percentage adjustments.")
+
+
+        final_forecast_list.append(schemas.FinalForecastData(
             client_id=client_id,
             sku_id=sku_id,
-            client_final_id=client_final_id, # Se asume el mismo client_final_id
-            period=current_period,
-            value=final_value,
-            clientName=statistical_forecast_data[0].client.client_name if statistical_forecast_data else "N/A",
-            skuName=statistical_forecast_data[0].sku.sku_name if statistical_forecast_data else "N/A"
+            client_final_id=client_final_id,
+            period=period,
+            value=adjusted_value
         ))
-        # Mover al siguiente mes
-        if current_period.month == 12:
-            current_period = current_period.replace(year=current_period.year + 1, month=1, day=1)
-        else:
-            current_period = current_period.replace(month=current_period.month + 1, day=1)
-
-    return final_forecast_results
+    
+    logger.info(f"--- Exiting calculate_final_forecast. Final list size: {len(final_forecast_list)}. First entry value: {final_forecast_list[0].value if final_forecast_list else 'N/A'} ---")
+    return final_forecast_list

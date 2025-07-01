@@ -1,11 +1,12 @@
-# backend/app/routers/sales_forecast.py - Versión FINAL CORREGIDA para historySource alias
+# backend/app/routers/sales_forecast.py
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from datetime import date
+from typing import List, Optional, Dict, Any
+from datetime import date, datetime
 import uuid
 import logging
+from collections import defaultdict
 
 from .. import crud, schemas, models, forecast_engine
 from ..database import get_db
@@ -70,7 +71,7 @@ def create_history_data(
     """
     Create a new historical sales data entry.
     """
-    user_id_for_creation = uuid.UUID('00000000-0000-0000-0000-000000000001')
+    user_id_for_creation = uuid.UUID('00000000-0000-0000-0000-000000000001') # Placeholder de usuario
 
     client_exists = crud.get_client(db, client_id=fact_history.client_id)
     sku_exists = crud.get_sku(db, sku_id=fact_history.sku_id)
@@ -112,7 +113,7 @@ def update_history_data(
     Update an existing historical sales data entry.
     Requires all primary key components in the path/query for identification.
     """
-    user_id_for_update = uuid.UUID('00000000-0000-0000-0000-000000000001')
+    user_id_for_update = uuid.UUID('00000000-0000-0000-0000-000000000001') # Placeholder de usuario
     db_history = crud.update_fact_history(
         db,
         client_id=client_id,
@@ -161,7 +162,7 @@ def generate_forecast_api(
     request: Request,
     client_id_str: str = Query(..., alias="clientId", description="Client UUID for which to generate forecast"),
     sku_id_str: str = Query(..., alias="skuId", description="SKU UUID for which to generate forecast"),
-    history_source: str = Query(..., alias="historySource", description="Source of historical data ('sales', 'shipments', or 'order')"), # CORREGIDO: Añadido alias
+    history_source: str = Query(..., alias="historySource", description="Source of historical data ('sales', 'shipments', or 'order')"), 
     smoothing_alpha: float = Query(0.5, ge=0.0, le=1.0, description="Alpha parameter for exponential smoothing (0.0 to 1.0)"),
     model_name: str = Query("ETS", description="Statistical model to use for forecast (e.g., 'ETS', 'ARIMA')"),
     forecast_horizon: int = Query(12, ge=1, description="Number of periods to forecast ahead"),
@@ -184,6 +185,8 @@ def generate_forecast_api(
     if history_source not in ['sales', 'order', 'shipments']:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid history_source. Must be 'sales', 'order', or 'shipments'.")
 
+    user_id = uuid.UUID('00000000-0000-0000-0000-000000000001') 
+
     try:
         result = forecast_engine.generate_forecast(
             db=db,
@@ -192,12 +195,14 @@ def generate_forecast_api(
             history_source=history_source,
             smoothing_alpha=smoothing_alpha,
             model_name=model_name,
-            forecast_horizon=forecast_horizon
+            forecast_horizon=forecast_horizon,
+            user_id=user_id 
         )
         return {"message": "Pronóstico generado y guardado exitosamente", "result": result}
     except RuntimeError as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate forecast: {e}")
     except Exception as e:
+        logger.error(f"Error during forecast generation: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred during forecast generation: {e}")
 
 # --- Endpoints para FactForecastStat ---
@@ -218,35 +223,11 @@ def read_forecast_stat_data_api(
     data = crud.get_fact_forecast_stat_data(db, validated_client_ids, validated_sku_ids, start_period, end_period, validated_forecast_run_ids, skip, limit)
     return data
 
-# --- Endpoints para FactAdjustments (¡Importante!) ---
-@router.get("/adjustments/", response_model=List[schemas.FactAdjustments])
-def read_adjustments_data_api(
-    client_ids: List[str] = Query([], description="Filter by client UUIDs"),
-    sku_ids: List[str] = Query([], description="Filter by SKU UUIDs"),
-    start_period: Optional[date] = Query(None, description="Filter data from this period (YYYY-MM-DD)"),
-    end_period: Optional[date] = Query(None, description="Filter data up to this period (YYYY-MM-DD)"),
-    key_figure_ids: List[int] = Query([], description="Filter by KeyFigure IDs"),
-    adjustment_type_ids: List[int] = Query([], description="Filter by Adjustment Type IDs"),
-    skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
-):
-    """
-    Retrieve manual adjustments data with various filters.
-    """
-    # Validar y convertir UUIDs
-    validated_client_ids = [validate_uuid_param(uid, "client_id") for uid in client_ids] if client_ids else None
-    validated_sku_ids = [validate_uuid_param(uid, "sku_id") for uid in sku_ids] if sku_ids else None
-
-    data = crud.get_fact_adjustments_data(db, validated_client_ids, validated_sku_ids, start_period, end_period, key_figure_ids, adjustment_type_ids, skip, limit)
-    return data
-
 @router.post("/adjustments/", response_model=schemas.FactAdjustments, status_code=status.HTTP_201_CREATED)
 def create_adjustment_api(
     adjustment: schemas.FactAdjustmentsCreate,
     db: Session = Depends(get_db)
 ):
-    """
-    Create or update a manual adjustment entry.
-    """
     user_id_for_adjustment = uuid.UUID('00000000-0000-0000-0000-000000000001') # Placeholder
 
     client_exists = crud.get_client(db, client_id=adjustment.client_id)
@@ -282,70 +263,87 @@ def read_forecast_versioned_data_api(
     data = crud.get_fact_forecast_versioned_data(db, validated_version_ids, validated_client_ids, validated_sku_ids, start_period, end_period, key_figure_ids, skip, limit)
     return data
 
-# --- NUEVOS Endpoints para Historia Limpia y Pronóstico Final ---
-@router.get("/clean_history/", response_model=List[schemas.CleanHistoryData])
-def read_clean_history_data_api(
-    client_id_str: str = Query(..., alias="client_id", description="Client UUID for which to calculate clean history"),
-    sku_id_str: str = Query(..., alias="sku_id", description="SKU UUID for which to calculate clean history"),
-    client_final_id_str: str = Query(..., alias="client_final_id", description="Client Final ID for clean history calculation"),
-    start_period: date = Query(..., description="Start period for clean history calculation (YYYY-MM-DD)"),
-    end_period: date = Query(..., description="End period for clean history calculation (YYYY-MM-DD)"),
-    history_source: str = Query('sales', alias="historySource", description="Source of raw historical data (e.g., 'sales')"), # CORREGIDO: Añadido alias
+# --- NUEVO Endpoint para proveer datos a la tabla AG-Grid ---
+# ...existing code...
+
+@router.get("/sales_forecast_data", response_model=Dict[str, Any])
+def get_sales_forecast_data_for_grid(
+    client_id: uuid.UUID = Query(..., description="Client UUID"),
+    sku_id: uuid.UUID = Query(..., description="SKU UUID"),
+    client_final_id: uuid.UUID = Query(..., description="Client Final ID"), # Should be same as client_id for now
+    start_period: date = Query(..., description="Start period (YYYY-MM-DD)"),
+    end_period: date = Query(..., description="End period (YYYY-MM-DD)"),
     db: Session = Depends(get_db)
 ):
     """
-    Calculates and returns 'Clean History' based on raw history and cleaning adjustments.
+    Retrieves and transforms sales and forecast data for AG-Grid display.
+    Combines raw history, clean history, statistical forecast, and final forecast.
     """
-    client_id = validate_uuid_param(client_id_str, "client_id")
-    sku_id = validate_uuid_param(sku_id_str, "sku_id")
-    client_final_id = validate_uuid_param(client_final_id_str, "client_final_id")
-
-    # Validaciones básicas
-    db_client = crud.get_client(db, client_id=client_id)
-    db_sku = crud.get_sku(db, sku_id=sku_id)
-    if not db_client or not db_sku:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client or SKU not found.")
-
+    logger.info(f"--- get_sales_forecast_data_for_grid called for Client: {client_id}, SKU: {sku_id}, Period: {start_period} to {end_period} ---")
     try:
-        clean_history = forecast_engine.calculate_clean_history(
+        # Fetch all relevant DimKeyFigures for mapping and order
+        all_dim_key_figures = crud.get_key_figures(db)
+        key_figure_name_map = {kf.key_figure_id: kf.name for kf in all_dim_key_figures}
+        key_figure_order_map = {kf.name: kf.order for kf in all_dim_key_figures}
+        logger.info(f"Fetched {len(all_dim_key_figures)} dim_keyfigures.")
+
+        # 1. Fetch data from all relevant tables
+        history_raw_data = crud.get_fact_history_data(
             db=db,
-            client_id=client_id,
-            sku_id=sku_id,
-            client_final_id=client_final_id,
+            client_ids=[client_id],
+            sku_ids=[sku_id],
             start_period=start_period,
             end_period=end_period,
-            history_source=history_source
+            sources=['sales', 'order', 'shipments'],
+            key_figure_ids=[schemas.KEY_FIGURE_SALES_ID, schemas.KEY_FIGURE_ORDERS_ID] # Fetch Sales and Orders raw
         )
-        if not clean_history:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No clean history data found for the given criteria.")
-        return clean_history
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to calculate clean history: {e}")
+        logger.info(f"Fetched {len(history_raw_data)} raw history records (Sales/Orders).")
 
-@router.get("/final_forecast/", response_model=List[schemas.FinalForecastData])
-def read_final_forecast_data_api(
-    client_id_str: str = Query(..., alias="client_id", description="Client UUID for which to calculate final forecast"),
-    sku_id_str: str = Query(..., alias="sku_id", description="SKU UUID for which to calculate final forecast"),
-    client_final_id_str: str = Query(..., alias="client_final_id", description="Client Final ID for final forecast calculation"),
-    start_period: date = Query(..., description="Start period for final forecast calculation (YYYY-MM-DD)"),
-    end_period: date = Query(..., description="End period for final forecast calculation (YYYY-MM-DD)"),
-    db: Session = Depends(get_db)
-):
-    """
-    Calculates and returns 'Final Forecast' based on statistical forecast and manual adjustments.
-    """
-    client_id = validate_uuid_param(client_id_str, "client_id")
-    sku_id = validate_uuid_param(sku_id_str, "sku_id")
-    client_final_id = validate_uuid_param(client_final_id_str, "client_final_id")
+        history_smoothed_sales_data = crud.get_fact_history_data(
+            db=db,
+            client_ids=[client_id],
+            sku_ids=[sku_id],
+            start_period=start_period,
+            end_period=end_period,
+            sources=['sales'], # Smoothed sales is from sales source
+            key_figure_ids=[schemas.KEY_FIGURE_SMOOTHED_SALES_ID]
+        )
+        logger.info(f"Fetched {len(history_smoothed_sales_data)} smoothed sales history records (KF_SMOOTHED_SALES).")
 
-    # Validaciones básicas
-    db_client = crud.get_client(db, client_id=client_id)
-    db_sku = crud.get_sku(db, sku_id=sku_id)
-    if not db_client or not db_sku:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client or SKU not found.")
+        history_smoothed_orders_data = crud.get_fact_history_data(
+            db=db,
+            client_ids=[client_id],
+            sku_ids=[sku_id],
+            start_period=start_period,
+            end_period=end_period,
+            sources=['order', 'shipments'], # Smoothed orders is from order/shipments source
+            key_figure_ids=[schemas.KEY_FIGURE_SMOOTHED_ORDERS_ID]
+        )
+        logger.info(f"Fetched {len(history_smoothed_orders_data)} smoothed orders history records (KF_SMOOTHED_ORDERS).")
 
-    try:
-        final_forecast = forecast_engine.calculate_final_forecast(
+        # 1. Obtén los datos originales
+        forecast_stat_sales_data = crud.get_fact_forecast_stat_data(
+            db=db,
+            client_ids=[client_id],
+            sku_ids=[sku_id],
+            start_period=start_period,
+            end_period=end_period,
+            key_figure_ids=[schemas.KEY_FIGURE_STAT_FORECAST_SALES_ID]
+        )
+        logger.info(f"Fetched {len(forecast_stat_sales_data)} statistical forecast sales records.")
+
+        forecast_stat_orders_data = crud.get_fact_forecast_stat_data(
+            db=db,
+            client_ids=[client_id],
+            sku_ids=[sku_id],
+            start_period=start_period,
+            end_period=end_period,
+            key_figure_ids=[schemas.KEY_FIGURE_STAT_FORECAST_ORDERS_ID]
+        )
+        logger.info(f"Fetched {len(forecast_stat_orders_data)} statistical forecast orders records.")
+
+
+        manual_input_data = forecast_engine.calculate_manual_input_history( # Nuevo nombre de función
             db=db,
             client_id=client_id,
             sku_id=sku_id,
@@ -353,66 +351,247 @@ def read_final_forecast_data_api(
             start_period=start_period,
             end_period=end_period
         )
-        if not final_forecast:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No final forecast data found for the given criteria.")
-        return final_forecast
+        logger.info(f"Fetched {len(manual_input_data)} manual input history records.")
+
+        final_forecast_data = forecast_engine.calculate_final_forecast(
+            db=db,
+            client_id=client_id,
+            sku_id=sku_id,
+            client_final_id=client_final_id,
+            start_period=start_period,
+            end_period=end_period
+        )
+        logger.info(f"Fetched {len(final_forecast_data)} final forecast records.")
+
+        all_comments = crud.get_manual_input_comment_data(
+            db=db,
+            client_ids=[client_id],
+            sku_ids=[sku_id],
+            start_period=start_period,
+            end_period=end_period
+        )
+        logger.info(f"Fetched {len(all_comments)} comment records.")
+        
+        manual_adj_qty_values = crud.get_fact_adjustments_for_calculation(
+            db=db, client_id=client_id, sku_id=sku_id, start_period=start_period, end_period=end_period,
+            key_figure_id=schemas.KEY_FIGURE_FINAL_FORECAST_ID, adjustment_type_ids=[schemas.ADJUSTMENT_TYPE_QTY_ID] # Ajustes a Final Forecast
+        )
+        logger.info(f"Fetched {len(manual_adj_qty_values)} manual quantity adjustment records.")
+
+        manual_adj_pct_values = crud.get_fact_adjustments_for_calculation(
+            db=db, client_id=client_id, sku_id=sku_id, start_period=start_period, end_period=end_period,
+            key_figure_id=schemas.KEY_FIGURE_FINAL_FORECAST_ID, adjustment_type_ids=[schemas.ADJUSTMENT_TYPE_PCT_ID] # Ajustes a Final Forecast
+        )
+        logger.info(f"Fetched {len(manual_adj_pct_values)} manual percentage adjustment records.")
+
+        override_values = crud.get_fact_adjustments_for_calculation(
+            db=db, client_id=client_id, sku_id=sku_id, start_period=start_period, end_period=end_period,
+            key_figure_id=schemas.KEY_FIGURE_FINAL_FORECAST_ID, # Override a Final Forecast
+            adjustment_type_ids=[schemas.ADJUSTMENT_TYPE_OVERRIDE_ID]
+        )
+        logger.info(f"Fetched {len(override_values)} override adjustment records.")
+
+
+        # 2. Consolidate all data into a flat list of dictionaries with consistent keys
+        consolidated_data = []
+
+        # Process Sales (raw history)
+        for item in history_raw_data:
+            if item.source == 'sales': # Solo Sales como figura clave 'Sales'
+                consolidated_data.append({
+                    "client_id": item.client_id, "sku_id": item.sku_id, "client_final_id": item.client_final_id,
+                    "period": item.period, "key_figure_id": schemas.KEY_FIGURE_SALES_ID,
+                    "key_figure_name": key_figure_name_map.get(schemas.KEY_FIGURE_SALES_ID, "Sales"),
+                    "value": item.value
+                })
+            elif item.source == 'order' or item.source == 'shipments': # Orders/Shipments como figura clave 'Orders'
+                consolidated_data.append({
+                    "client_id": item.client_id, "sku_id": item.sku_id, "client_final_id": item.client_final_id,
+                    "period": item.period, "key_figure_id": schemas.KEY_FIGURE_ORDERS_ID,
+                    "key_figure_name": key_figure_name_map.get(schemas.KEY_FIGURE_ORDERS_ID, "Orders"),
+                    "value": item.value
+                })
+
+        # Process Smoothed Sales
+        for item in history_smoothed_sales_data:
+            consolidated_data.append({
+                "client_id": item.client_id, "sku_id": item.sku_id, "client_final_id": item.client_final_id,
+                "period": item.period, "key_figure_id": schemas.KEY_FIGURE_SMOOTHED_SALES_ID,
+                "key_figure_name": key_figure_name_map.get(schemas.KEY_FIGURE_SMOOTHED_SALES_ID, "Smoothed Sales"),
+                "value": item.value
+            })
+        # Process Smoothed Orders
+        for item in history_smoothed_orders_data:
+            consolidated_data.append({
+                "client_id": item.client_id, "sku_id": item.sku_id, "client_final_id": item.client_final_id,
+                "period": item.period, "key_figure_id": schemas.KEY_FIGURE_SMOOTHED_ORDERS_ID,
+                "key_figure_name": key_figure_name_map.get(schemas.KEY_FIGURE_SMOOTHED_ORDERS_ID, "Smoothed Orders"),
+                "value": item.value
+            })
+        # 2. Obtén los overrides para ambos Key Figures
+        stat_sales_overrides = crud.get_fact_adjustments_for_calculation(
+            db=db,
+            client_id=client_id,
+            sku_id=sku_id,
+            start_period=start_period,
+            end_period=end_period,
+            key_figure_id=schemas.KEY_FIGURE_STAT_FORECAST_SALES_ID,
+            adjustment_type_ids=[schemas.ADJUSTMENT_TYPE_OVERRIDE_ID]
+        )
+        stat_orders_overrides = crud.get_fact_adjustments_for_calculation(
+            db=db,
+            client_id=client_id,
+            sku_id=sku_id,
+            start_period=start_period,
+            end_period=end_period,
+            key_figure_id=schemas.KEY_FIGURE_STAT_FORECAST_ORDERS_ID,
+            adjustment_type_ids=[schemas.ADJUSTMENT_TYPE_OVERRIDE_ID]
+        )
+        stat_sales_overrides_map = {adj.period: adj.value for adj in stat_sales_overrides}
+        stat_orders_overrides_map = {adj.period: adj.value for adj in stat_orders_overrides}
+
+
+        # 3. Al consolidar los datos, aplica el override si existe
+        # Para "Statistical forecast Sales"
+        for item in forecast_stat_sales_data:
+            value_to_use = stat_sales_overrides_map.get(item.period, item.value)
+            consolidated_data.append({
+                "client_id": item.client_id, "sku_id": item.sku_id, "client_final_id": item.client_final_id,
+                "period": item.period, "key_figure_id": schemas.KEY_FIGURE_STAT_FORECAST_SALES_ID, 
+                "key_figure_name": key_figure_name_map.get(schemas.KEY_FIGURE_STAT_FORECAST_SALES_ID, "Statistical forecast Sales"),
+                "value": value_to_use
+            })
+        # Para "Statistical forecast Orders"
+        for item in forecast_stat_orders_data:
+            value_to_use = stat_orders_overrides_map.get(item.period, item.value)
+            consolidated_data.append({
+                "client_id": item.client_id, "sku_id": item.sku_id, "client_final_id": item.client_final_id,
+                "period": item.period, "key_figure_id": schemas.KEY_FIGURE_STAT_FORECAST_ORDERS_ID, 
+                "key_figure_name": key_figure_name_map.get(schemas.KEY_FIGURE_STAT_FORECAST_ORDERS_ID, "Statistical forecast Orders"),
+                "value": value_to_use
+            })
+        
+        # Process Manual input (from clean_history_data)
+        for item in manual_input_data: # clean_history_data from forecast_engine.calculate_manual_input_history
+            consolidated_data.append({
+                "client_id": item.client_id, "sku_id": item.sku_id, "client_final_id": item.client_final_id,
+                "period": item.period, "key_figure_id": schemas.KEY_FIGURE_MANUAL_INPUT_ID, 
+                "key_figure_name": key_figure_name_map.get(schemas.KEY_FIGURE_MANUAL_INPUT_ID, "Manual input"),
+                "value": item.value
+            })
+
+        # Process FinalForecastData 
+        for item in final_forecast_data:
+            consolidated_data.append({
+                "client_id": item.client_id, "sku_id": item.sku_id, "client_final_id": item.client_final_id,
+                "period": item.period, "key_figure_id": schemas.KEY_FIGURE_FINAL_FORECAST_ID, 
+                "key_figure_name": key_figure_name_map.get(schemas.KEY_FIGURE_FINAL_FORECAST_ID, "Final Forecast"),
+                "value": item.value
+            })
+        
+        logger.info(f"Consolidated data count: {len(consolidated_data)} records.")
+
+
+        if not consolidated_data:
+            logger.info("No consolidated data, returning empty rows and columns.")
+            return {"rows": [], "columns": []}
+
+        # 3. Prepare data for pivoting into rows and columns
+        unique_periods = sorted(list(set(item["period"] for item in consolidated_data)))
+        logger.info(f"Unique periods found: {len(unique_periods)}.")
+        
+        sorted_key_figure_names_for_rows = sorted(
+            list(set(item["key_figure_name"] for item in consolidated_data)),
+            key=lambda name: key_figure_order_map.get(name, 999) 
+        )
+        logger.info(f"Sorted key figure names for rows: {len(sorted_key_figure_names_for_rows)}.")
+
+        # Map for comments to quickly check if a cell has comments
+        comments_map_for_grid = defaultdict(bool)
+        for comment in all_comments:
+            key = f"{comment.client_id}-{comment.sku_id}-{comment.period.isoformat()}-{comment.key_figure_id}"
+            comments_map_for_grid[key] = True
+        logger.info(f"Comments map populated with {len(comments_map_for_grid)} entries.")
+
+        # IDs de históricos y pronóstico
+        HISTORICAL_KF_IDS = [1, 2, 3, 4, 5]
+        FORECAST_KF_IDS = [6, 7, 8]
+
+        # Al armar las filas para la grilla:
+        all_kf_ids = HISTORICAL_KF_IDS + FORECAST_KF_IDS
+        all_kf_names = [key_figure_name_map[kf_id] for kf_id in all_kf_ids]
+
+
+        grid_rows_final = []
+        for kf_id in all_kf_ids:
+            kf_name = key_figure_name_map[kf_id]
+            current_row = {
+                "keyFigureName": kf_name,
+                "client_id": client_id,
+                "sku_id": sku_id,
+                "client_final_id": client_final_id,
+                "clientName": crud.get_client(db, client_id).client_name if crud.get_client(db, client_id) else "N/A",
+                "skuName": crud.get_sku(db, sku_id).sku_name if crud.get_sku(db, sku_id) else "N/A"
+            }
+            for period in unique_periods:
+                period_iso = period.isoformat()
+                data_field_name = f"date_{period_iso}"
+
+                # Para históricos: siempre mostrar lo que haya
+                if kf_id in HISTORICAL_KF_IDS:
+                    value_for_cell = next(
+                        (item["value"] for item in consolidated_data 
+                        if item["key_figure_id"] == kf_id and item["period"] == period),
+                        None
+                    )
+                    current_row[data_field_name] = value_for_cell
+
+                # Para forecast: solo mostrar si hay forecast generado
+                elif kf_id in FORECAST_KF_IDS:
+                    value_for_cell = next(
+                        (item["value"] for item in consolidated_data 
+                        if item["key_figure_id"] == kf_id and item["period"] == period),
+                        None
+                    )
+                    # Solo mostrar si hay forecast generado (es decir, si value_for_cell no es None)
+                    current_row[data_field_name] = value_for_cell if value_for_cell is not None else None
+
+                # ... lógica para comentarios, etc ...
+            grid_rows_final.append(current_row)
+            logger.info(f"Final grid rows generated: {len(grid_rows_final)} rows.")
+
+        # --- AJUSTE: Generar columnas: Key Figure + meses ---
+        dynamic_columns_for_grid = [
+            {
+                "headerName": "Key Figure",
+                "field": "keyFigureName",
+                "pinned": "left",
+                "editable": False  # El frontend decide si es editable
+            }
+        ]
+        for period in unique_periods:
+            period_iso = period.isoformat()
+            period_header = period.strftime('%b %Y')
+            dynamic_columns_for_grid.append({
+                "headerName": period_header,
+                "field": f"date_{period_iso}",
+                "colId": f"date_{period_iso}",
+                # "editable": False,  # El frontend decide si es editable
+                "type": "numericColumn"
+            })
+
+        logger.info(f"Dynamic columns generated: {len(dynamic_columns_for_grid)} columns.")
+
+        return {
+            "rows": grid_rows_final,
+            "columns": dynamic_columns_for_grid
+        }
+
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to calculate final forecast: {e}")
+        logger.error(f"Error getting sales forecast data for grid: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve sales forecast data: {e}")
 
-
-# --- Endpoints para ManualInputComments ---
-@router.get("/comments/", response_model=List[schemas.ManualInputComment])
-def read_manual_input_comments_api(
-    client_ids: List[str] = Query([], description="Filter by client UUIDs"),
-    sku_ids: List[str] = Query([], description="Filter by SKU UUIDs"),
-    start_period: Optional[date] = Query(None, description="Filter data from this period (YYYY-MM-DD)"),
-    end_period: Optional[date] = Query(None, description="Filter data up to this period (YYYY-MM-DD)"),
-    key_figure_ids: List[int] = Query([], description="Filter by KeyFigure IDs"),
-    skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
-):
-    """
-    Retrieve manual input comments with various filters.
-    """
-    # Validar y convertir UUIDs
-    validated_client_ids = [validate_uuid_param(uid, "client_id") for uid in client_ids] if client_ids else None
-    validated_sku_ids = [validate_uuid_param(uid, "sku_id") for uid in sku_ids] if sku_ids else None
-
-    data = crud.get_manual_input_comment_data(db, validated_client_ids, validated_sku_ids, start_period, end_period, key_figure_ids, skip, limit)
-    return data
-
-@router.post("/comments/", response_model=schemas.ManualInputComment, status_code=status.HTTP_201_CREATED)
-def create_manual_input_comment_api(
-    comment: schemas.ManualInputCommentCreate,
-    db: Session = Depends(get_db)
-):
-    """
-    Create a new manual input comment entry.
-    """
-    client_exists = crud.get_client(db, client_id=comment.client_id)
-    sku_exists = crud.get_sku(db, sku_id=comment.sku_id)
-    key_figure_exists = crud.get_key_figure(db, key_figure_id=comment.key_figure_id)
-
-    if not all([client_exists, sku_exists, key_figure_exists]):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="One or more related IDs (Client, SKU, Key Figure) not found.")
-
-    try:
-        db_comment = crud.create_manual_input_comment(db=db, comment=comment)
-        return db_comment
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create comment: {e}")
-
-
-# --- Endpoints para ForecastVersions ---
-@router.get("/versions/", response_model=List[schemas.ForecastVersion])
-def read_forecast_versions_api(
-    client_id: Optional[uuid.UUID] = Query(None, description="Filter versions by client UUID"),
-    skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
-):
-    query = db.query(models.ForecastVersion)
-    if client_id:
-        query = query.filter(models.ForecastVersion.client_id == client_id)
-    versions = query.offset(skip).limit(limit).all()
-    return versions
+# ...existing code...
 
 # --- Endpoints para ForecastSmoothingParameters ---
 @router.get("/smoothing_parameters/", response_model=List[schemas.ForecastSmoothingParameter])
@@ -431,3 +610,15 @@ def read_forecast_smoothing_parameters_api(
 def read_adjustment_types_api(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     types = crud.get_adjustment_types(db, skip, limit)
     return types
+
+@router.get("/forecast/versions", response_model=List[schemas.ForecastVersion])
+def get_forecast_versions_api(
+    client_id: Optional[uuid.UUID] = Query(None, description="UUID del cliente"),
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    Devuelve una lista de versiones de pronóstico.
+    """
+    return crud.get_forecast_versions(db=db, client_id=client_id, skip=skip, limit=limit)

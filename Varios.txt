@@ -1,24 +1,50 @@
--- RECREAR LA BASE DE DATOS! 
-D:\Descargas\Tincho\Wirebi-russofranco86hot\Wirebi\WireBI_db.bat
+Instalar: 
+PostgreSQL
+https://www.enterprisedb.com/downloads/postgres-postgresql-downloads
 
-Ir a Visual code, y dar permisos parar correr scripts:
-1) Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+Agregar en variables de entorno, en el PATH:
+la ruta donde se instalo (generalmente: C:\Program Files\PostgreSQL\17\bin)
 
-2) Ir al path donde esta el backend, por ejemplo: cd .\backend
+c:
+cd C:\"Program Files"\PostgreSQL\17\bin
+$env:PGPASSWORD="Chaca1986!"; .\psql -h localhost -U postgres -d forecaist -f d:\Wirebi/ventas-pronostico-app/src/db/forecaist_schema.sql
 
-3) Borrar el ambiente de Backend:
+Abrir pgAdmin
+Add New Server
 
+Desde la RAÍZ de Wirebi
+
+1) Recrear Base de datos
+
+$env:PGPASSWORD="Chaca1986!"; psql -h localhost -U fr94901 -d forecaist -f ventas-pronostico-app/src/db/forecaist_schema.sql
+
+$env:DATABASE_URL="postgresql://fr94901:Chaca1986!@localhost:5432/forecaist"
+
+python ventas-pronostico-app/src/db/migrate_data.py
+
+2) Luego correr dar permisos parar correr scripts:
+
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+2) Borrar el ambiente de Backend:
+
+cd .\backend
 Remove-Item -Recurse -Force .venv_backend
 
-4) Instalar el ambiente:
+3) Instalar el ambiente:
 
 pip install -r requirements.txt
+
+4) Crear el entorno virtual:
+
+python -m venv .venv_backend
 
 5) Activarlo:
 
 .venv_backend\Scripts\activate
 
 6) 
+
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 

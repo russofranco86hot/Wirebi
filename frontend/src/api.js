@@ -1,186 +1,248 @@
-// frontend/src/api.js - Versión actualizada con endpoints de Historia Limpia, Pronóstico Final y Comentarios
-//                       INCLUYE FILTRADO DE SKUs POR CLIENTE
+// frontend/src/api.js
 
-const API_BASE_URL = 'http://localhost:8000'; // Ajusta esto si tu backend se ejecuta en otra URL
+const API_BASE_URL = 'http://localhost:8000'; // Asegúrate de que esta URL sea correcta para tu backend
 
-async function handleApiResponse(response) {
-    if (!response.ok) {
-        let errorData;
-        try {
-            errorData = await response.json();
-        } catch (e) {
-            errorData = { detail: `No JSON response or parsing error, status: ${response.status}. Text: ${await response.text()}` };
+// Funciones para clientes
+export const fetchClients = async () => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/clients/`);
+        if (!response.ok) {
+            throw new Error('Error al obtener la lista de clientes.');
         }
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching clients:', error);
+        throw error;
+    }
+};
+
+// Funciones para SKUs (ACTUALIZADO para usar el nuevo endpoint /skus?client_id=...)
+export const fetchSkus = async (clientId) => {
+    try {
+        const url = new URL(`${API_BASE_URL}/skus/`); // Ruta base /skus/
+        if (clientId) {
+            url.searchParams.append('client_id', clientId); // Añadir client_id como query param
+        }
+        const response = await fetch(url.toString());
+        if (!response.ok) {
+            throw new Error('Error al obtener la lista de SKUs.');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching SKUs:', error);
+        throw error;
+    }
+};
+
+// Funciones para Key Figures
+export const fetchKeyFigures = async () => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/keyfigures/`);
+        if (!response.ok) {
+            throw new Error('Error al obtener las figuras clave.');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching key figures:', error);
+        throw error;
+    }
+};
+
+// Funciones para obtener tipos de ajuste
+export const fetchAdjustmentTypes = async () => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/data/adjustment_types/`);
+        if (!response.ok) {
+            throw new Error('Error al obtener los tipos de ajuste.');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching adjustment types:', error);
+        throw error;
+    }
+};
+
+// Función para obtener datos de ventas y pronósticos (ajustada para el nuevo endpoint)
+export const salesForecastApi = async (clientId, skuId, clientFinalId, startPeriod, endPeriod) => {
+    try {
+        const url = new URL(`${API_BASE_URL}/data/sales_forecast_data`);
+        url.searchParams.append('client_id', clientId);
+        url.searchParams.append('sku_id', skuId);
+        url.searchParams.append('client_final_id', clientFinalId);
+        url.searchParams.append('start_period', startPeriod);
+        url.searchParams.append('end_period', endPeriod);
+
+        const response = await fetch(url.toString());
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Error al obtener los datos de pronóstico de ventas.');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error in salesForecastApi:', error);
+        throw error;
+    }
+};
+
+// Función para actualizar una celda de ajuste
+export const updateAdjustment = async (adjustmentData) => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/data/adjustments/`, {
+            method: 'POST', // Usamos POST para upsert
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(adjustmentData),
+        });
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Error al actualizar el ajuste.');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error updating adjustment:', error);
+        throw error;
+    }
+};
+
+// Función para generar el pronóstico estadístico
+export const generateStatisticalForecast = async (clientId, skuId, historySource, smoothingAlpha, modelName, forecastHorizon) => {
+    try {
+        const url = new URL(`${API_BASE_URL}/data/forecast/generate/`);
+        url.searchParams.append('clientId', clientId);
+        url.searchParams.append('skuId', skuId);
+        url.searchParams.append('historySource', historySource); // 'sales', 'shipments', 'order'
+        url.searchParams.append('smoothing_alpha', smoothingAlpha);
+        url.searchParams.append('model_name', modelName);
+        url.searchParams.append('forecast_horizon', forecastHorizon);
+
+        const response = await fetch(url.toString(), {
+            method: 'POST',
+        });
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Error al generar el pronóstico estadístico.');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error generating statistical forecast:', error);
+        throw error;
+    }
+};
+
+// Función para guardar un comentario
+export const saveComment = async (commentData) => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/data/comments/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(commentData),
+        });
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Error al guardar el comentario.');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error saving comment:', error);
+        throw error;
+    }
+};
+
+// Función para obtener comentarios
+export const fetchComments = async (clientId, skuId, clientFinalId, period, keyFigureId) => {
+    try {
+        const url = new URL(`${API_BASE_URL}/data/comments/`);
+        const clientIds = clientId ? [clientId] : [];
+        const skuIds = skuId ? [skuId] : [];
+        const keyFigureIds = keyFigureId ? [keyFigureId] : [];
+
+        if (clientIds.length > 0) url.searchParams.append('client_ids', clientIds.join(','));
+        if (skuIds.length > 0) url.searchParams.append('sku_ids', skuIds.join(','));
+        if (period) {
+            url.searchParams.append('start_period', dayjs(period).format('YYYY-MM-DD'));
+            url.searchParams.append('end_period', dayjs(period).format('YYYY-MM-DD'));
+        }
+        if (keyFigureIds.length > 0) url.searchParams.append('key_figure_ids', keyFigureIds.join(','));
+
+        const response = await fetch(url.toString());
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Error al obtener los comentarios.');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching comments:', error);
+        throw error;
+    }
+};
+
+// --- FUNCIONES PARA VERSIONES (SNAPSHOTS) ---
+
+// Función para guardar una versión del pronóstico
+export const saveForecastVersion = async (versionData) => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/data/forecast/versions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(versionData),
+        });
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Error al guardar la versión del pronóstico.');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error saving forecast version:', error);
+        throw error;
+    }
+};
+
+// Función para obtener la lista de versiones
+export const fetchForecastVersions = async (clientId) => {
+    try {
+        const url = new URL(`${API_BASE_URL}/data/forecast/versions`);
+        if (clientId) {
+            url.searchParams.append('client_id', clientId);
+        }
+        const response = await fetch(url.toString());
+        if (!response.ok) {
+            throw new Error('Error al obtener las versiones del pronóstico.');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching forecast versions:', error);
+        throw error;
+    }
+};
+
+// Función para cargar datos de una versión específica (necesitarás implementar el endpoint en el backend si es diferente a fetchForecastVersionedData)
+export const fetchVersionedForecastData = async (versionId, clientId, skuId, clientFinalId, startPeriod, endPeriod) => {
+    try {
+        const url = new URL(`${API_BASE_URL}/data/forecast/versioned/`);
         
-        console.error("API Error Response (raw):", errorData);
+        // Asumiendo que el backend puede filtrar por estos parámetros
+        url.searchParams.append('version_ids', versionId);
+        url.searchParams.append('client_ids', clientId);
+        url.searchParams.append('sku_ids', skuId);
+        // clientFinalId no se usa directamente en el endpoint del backend que creamos para fetchVersionedForecastData,
+        // se maneja internamente en la relación de base de datos.
+        url.searchParams.append('start_period', startPeriod);
+        url.searchParams.append('end_period', endPeriod);
+        url.searchParams.append('key_figure_ids', 6); // Asumimos que quieres el Forecast Final versionado (ID 9)
 
-        let errorMessage = `HTTP error! status: ${response.status}`;
-
-        if (errorData.detail) {
-            if (Array.isArray(errorData.detail)) {
-                errorMessage = "Errores de validación:\n" + errorData.detail.map(err => {
-                    const loc = err.loc ? err.loc.join('.') : 'unknown';
-                    return `Campo: ${loc}, Mensaje: ${err.msg} (Tipo: ${err.type})`;
-                }).join('\n');
-            } else {
-                errorMessage = errorData.detail;
-            }
-        } else if (response.statusText) {
-            errorMessage = response.statusText;
+        const response = await fetch(url.toString());
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Error al obtener los datos de la versión del pronóstico.');
         }
-
-        throw new Error(errorMessage);
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching versioned forecast data:', error);
+        throw error;
     }
-    return response.json();
-}
-
-// --- Clientes ---
-export async function fetchClients() {
-    const response = await fetch(`${API_BASE_URL}/clients/`);
-    return handleApiResponse(response);
-}
-
-// --- SKUs (Modificado para aceptar clientId) ---
-export async function fetchSkus(clientId = null) {
-    const params = new URLSearchParams();
-    if (clientId) {
-        params.append('client_id', clientId);
-    }
-    const response = await fetch(`${API_BASE_URL}/skus/?${params.toString()}`);
-    return handleApiResponse(response);
-}
-
-// --- Key Figures ---
-export async function fetchKeyFigures() {
-    const response = await fetch(`${API_BASE_URL}/keyfigures/`);
-    return handleApiResponse(response);
-}
-
-// --- Adjustment Types ---
-export async function fetchAdjustmentTypes() {
-    const response = await fetch(`${API_BASE_URL}/data/adjustment_types/`);
-    return handleApiResponse(response);
-}
-
-// --- Fact History Data ---
-export async function fetchHistoricalData(filterParams = {}) {
-    const params = new URLSearchParams();
-    if (filterParams.clientIds) filterParams.clientIds.forEach(id => params.append('client_ids', id));
-    if (filterParams.skuIds) filterParams.skuIds.forEach(id => params.append('sku_ids', id));
-    if (filterParams.startPeriod) params.append('start_period', filterParams.startPeriod);
-    if (filterParams.endPeriod) params.append('end_period', filterParams.endPeriod);
-    if (filterParams.keyFigureIds) filterParams.keyFigureIds.forEach(id => params.append('key_figure_ids', id));
-    if (filterParams.sources) filterParams.sources.forEach(source => params.append('sources', source));
-
-    const response = await fetch(`${API_BASE_URL}/data/history/?${params.toString()}`);
-    return handleApiResponse(response);
-}
-
-// --- Fact Forecast Versioned Data (Si aplica) ---
-export async function fetchForecastVersionedData(filterParams = {}) {
-    const params = new URLSearchParams();
-    if (filterParams.versionIds) filterParams.versionIds.forEach(id => params.append('version_ids', id));
-    if (filterParams.clientIds) filterParams.clientIds.forEach(id => params.append('client_ids', id));
-    if (filterParams.skuIds) filterParams.skuIds.forEach(id => params.append('sku_ids', id));
-    if (filterParams.startPeriod) params.append('start_period', filterParams.startPeriod);
-    if (filterParams.endPeriod) params.append('end_period', filterParams.endPeriod);
-    if (filterParams.keyFigureIds) filterParams.keyFigureIds.forEach(id => params.append('key_figure_ids', id));
-
-    const response = await fetch(`${API_BASE_URL}/data/forecast/versioned/?${params.toString()}`);
-    return handleApiResponse(response);
-}
-
-// --- Fact Forecast Stat Data ---
-export async function fetchForecastStatData(filterParams = {}) {
-    const params = new URLSearchParams();
-    if (filterParams.clientIds) filterParams.clientIds.forEach(id => params.append('client_ids', id));
-    if (filterParams.skuIds) filterParams.skuIds.forEach(id => params.append('sku_ids', id));
-    if (filterParams.startPeriod) params.append('start_period', filterParams.startPeriod);
-    if (filterParams.endPeriod) params.append('end_period', filterParams.endPeriod);
-    if (filterParams.forecastRunIds) filterParams.forecastRunIds.forEach(id => params.append('forecast_run_ids', id));
-
-    const response = await fetch(`${API_BASE_URL}/data/forecast_stat/?${params.toString()}`);
-    return handleApiResponse(response);
-}
-
-// --- Generate Forecast ---
-export async function generateForecast(forecastParams) {
-    const params = new URLSearchParams();
-    for (const key in forecastParams) {
-        if (forecastParams[key] !== null && forecastParams[key] !== undefined) {
-            params.append(key, forecastParams[key]);
-        }
-    }
-    const response = await fetch(`${API_BASE_URL}/data/forecast/generate/?${params.toString()}`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-    });
-    return handleApiResponse(response);
-}
-
-// --- Send Manual Adjustment (UPSERT) ---
-export async function sendManualAdjustment(adjustmentPayload) {
-    console.log("Sending adjustment to URL: ", `${API_BASE_URL}/data/adjustments/`, "with data:", adjustmentPayload);
-    const response = await fetch(`${API_BASE_URL}/data/adjustments/`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(adjustmentPayload),
-    });
-    return handleApiResponse(response);
-}
-
-// --- NUEVAS FUNCIONES PARA HISTORIA LIMPIA Y PRONÓSTICO FINAL ---
-export async function fetchCleanHistoryData(filterParams = {}) {
-    const params = new URLSearchParams();
-    if (filterParams.clientId) params.append('client_id', filterParams.clientId);
-    if (filterParams.skuId) params.append('sku_id', filterParams.skuId);
-    if (filterParams.clientFinalId) params.append('client_final_id', filterParams.clientFinalId);
-    if (filterParams.startPeriod) params.append('start_period', filterParams.startPeriod);
-    if (filterParams.endPeriod) params.append('end_period', filterParams.endPeriod);
-    if (filterParams.historySource) params.append('history_source', filterParams.historySource);
-
-    const response = await fetch(`${API_BASE_URL}/data/clean_history/?${params.toString()}`);
-    return handleApiResponse(response);
-}
-
-export async function fetchFinalForecastData(filterParams = {}) {
-    const params = new URLSearchParams();
-    if (filterParams.clientId) params.append('client_id', filterParams.clientId);
-    if (filterParams.skuId) params.append('sku_id', filterParams.skuId);
-    if (filterParams.clientFinalId) params.append('client_final_id', filterParams.clientFinalId);
-    if (filterParams.startPeriod) params.append('start_period', filterParams.startPeriod);
-    if (filterParams.endPeriod) params.append('end_period', filterParams.endPeriod);
-    
-    const response = await fetch(`${API_BASE_URL}/data/final_forecast/?${params.toString()}`);
-    return handleApiResponse(response);
-}
-
-
-// --- NUEVAS FUNCIONES PARA COMENTARIOS ---
-export async function sendComment(commentPayload) {
-    console.log("Sending comment to URL: ", `${API_BASE_URL}/data/comments/`, "with data:", commentPayload);
-    const response = await fetch(`${API_BASE_URL}/data/comments/`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(commentPayload),
-    });
-    return handleApiResponse(response);
-}
-
-export async function fetchComments(filterParams = {}) {
-    const params = new URLSearchParams();
-    if (filterParams.clientIds) filterParams.clientIds.forEach(id => params.append('client_ids', id));
-    if (filterParams.skuIds) filterParams.skuIds.forEach(id => params.append('sku_ids', id));
-    if (filterParams.startPeriod) params.append('start_period', filterParams.startPeriod);
-    if (filterParams.endPeriod) params.append('end_period', filterParams.endPeriod);
-    if (filterParams.keyFigureIds) filterParams.keyFigureIds.forEach(id => params.append('key_figure_ids', id));
-
-    const response = await fetch(`${API_BASE_URL}/data/comments/?${params.toString()}`);
-    return handleApiResponse(response);
-}
+};
