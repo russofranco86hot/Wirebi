@@ -1,50 +1,66 @@
 Instalar: 
-PostgreSQL
+a) PostgreSQL
 https://www.enterprisedb.com/downloads/postgres-postgresql-downloads
+
+b) Pyhon: (tildar la opcion Add PYTHON to Path.)
+https://www.python.org/downloads/release/python-3116/
+
+c) Node.js
+https://nodejs.org/es/download
 
 Agregar en variables de entorno, en el PATH:
 la ruta donde se instalo (generalmente: C:\Program Files\PostgreSQL\17\bin)
+
+Cerra y abri el VisualCode.
+
+1) CREAR POSTGRESQL server:
+Abrir pgAdmin
+Add New Server
+
+
+2) Recrear Base de datos
 
 c:
 cd C:\"Program Files"\PostgreSQL\17\bin
 $env:PGPASSWORD="Chaca1986!"; .\psql -h localhost -U postgres -d forecaist -f d:\Wirebi/ventas-pronostico-app/src/db/forecaist_schema.sql
 
-Abrir pgAdmin
-Add New Server
-
 Desde la RAÍZ de Wirebi
 
-1) Recrear Base de datos
-
-$env:PGPASSWORD="Chaca1986!"; psql -h localhost -U fr94901 -d forecaist -f ventas-pronostico-app/src/db/forecaist_schema.sql
+// $env:PGPASSWORD="Chaca1986!"; psql -h localhost -U fr94901 -d forecaist -f ventas-pronostico-app/src/db/forecaist_schema.sql
 
 $env:DATABASE_URL="postgresql://fr94901:Chaca1986!@localhost:5432/forecaist"
 
-python ventas-pronostico-app/src/db/migrate_data.py
-
-2) Luego correr dar permisos parar correr scripts:
+3) Luego correr dar permisos parar correr scripts:
 
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
-2) Borrar el ambiente de Backend:
+4) Borrar el ambiente de Backend:
 
 cd .\backend
 Remove-Item -Recurse -Force .venv_backend
 
-3) Instalar el ambiente:
+5) Instalar el ambiente:
 
-pip install -r requirements.txt
+py -m pip install -r requirements.txt
+
+6) correr la migracion de data:
+
+cd..
+
+py ventas-pronostico-app/src/db/migrate_data.py
 
 4) Crear el entorno virtual:
 
-python -m venv .venv_backend
+cd backend
+py -m venv .venv_backend
 
 5) Activarlo:
 
 .venv_backend\Scripts\activate
 
-6) 
+6) instalar y correrlo
 
+pip install -r ./requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 
@@ -52,6 +68,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Para REACT:
 
+1)
 (borrar todo instalado segun package.json y reinstalar)
 
 cd ./frontend
@@ -59,7 +76,7 @@ Remove-Item -Recurse -Force node_modules
 Remove-Item package-lock.json
 npm install 
 
-1) Asegurarte de tener (sino instalar) NODE.JS y NPM.
+2) 
 
 cd D:\Descargas\Tincho\Wirebi-russofranco86hot\Wirebi\frontend
 
