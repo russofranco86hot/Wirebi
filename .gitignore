@@ -8,3 +8,4 @@ package-lock.json
 # Ignorar archivos de configuración de IDEs 
 *.pyc
 /backend/app/__pycache__
+/backend/app/routers/__pycache__
